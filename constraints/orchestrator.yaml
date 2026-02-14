@@ -1,0 +1,21 @@
+primary:
+  max_cyclomatic_complexity: 15
+  max_lines_per_function: 80
+
+secondary:
+  require_docstrings: true
+
+target_files:
+  - "orchestrator/models.py"
+  - "orchestrator/config.py"
+  - "orchestrator/spec_intake.py"
+  - "orchestrator/cli_runner.py"
+  - "orchestrator/test_generator.py"
+  - "orchestrator/critic.py"
+  - "orchestrator/constraint_checks.py"
+  - "orchestrator/constraint_loader.py"
+  - "orchestrator/session.py"
+  - "orchestrator/loop.py"
+  - "orchestrator/__main__.py"
+  - "orchestrator/display.py"
+  - "orchestrator/prompts.py"

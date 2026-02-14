@@ -1,0 +1,15 @@
+profiles:
+  default:
+    primary:
+      max_cyclomatic_complexity: 10
+    secondary:
+      require_docstrings: true
+
+  strict:
+    primary:
+      max_cyclomatic_complexity: 5
+      max_lines_per_function: 30
+    secondary:
+      require_docstrings: true
+
+functions: {}
