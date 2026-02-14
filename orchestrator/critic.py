@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from json_repair import repair_json
+
 from orchestrator.cli_runner import run_cli_agent
 from orchestrator.config import Config
 from orchestrator.models import TestCritique
@@ -16,35 +18,19 @@ from orchestrator.test_generator import extract_python_from_response
 def parse_critique(raw_json: str) -> TestCritique:
     """Parse a JSON string into a TestCritique model.
 
+    Uses ``json_repair`` to handle malformed JSON from LLMs (unescaped
+    braces, trailing commas, missing quotes, etc.) before parsing.
+
     Args:
         raw_json: JSON string from critique response.
 
     Returns:
         TestCritique model instance.
     """
-    try:
-        data = json.loads(raw_json)
-    except (json.JSONDecodeError, ValueError):
-        data = _extract_json_from_text(raw_json)
+    data = repair_json(raw_json, return_objects=True)
+    if not isinstance(data, dict):
+        raise ValueError("Critique response did not contain a JSON object")
     return TestCritique(**data)
-
-
-def _extract_json_from_text(text: str) -> dict:
-    """Extract and parse a JSON object embedded in surrounding text.
-
-    Args:
-        text: Raw critic response that may contain explanatory prose.
-
-    Returns:
-        Parsed JSON object dictionary.
-
-    Raises:
-        ValueError: If no valid JSON object can be found.
-    """
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        return json.loads(match.group())
-    raise ValueError("No valid JSON found in critique response")
 
 
 def run_exploit_check(test_source: str, spec, config: Config) -> tuple[bool, str]:
@@ -81,6 +67,37 @@ def run_exploit_check(test_source: str, spec, config: Config) -> tuple[bool, str
     return passed, exploit_code
 
 
+_STDLIB_AND_TEST = frozenset({
+    "pytest", "unittest", "collections", "typing", "dataclasses",
+    "functools", "itertools", "math", "os", "sys", "re", "json",
+    "pathlib", "abc", "enum", "copy", "operator", "random",
+    "datetime", "decimal", "fractions", "statistics", "string",
+    "textwrap", "io", "contextlib", "warnings", "types",
+})
+
+
+def _strip_local_imports(test_source: str) -> str:
+    """Remove ``from <module> import ...`` lines for non-standard modules.
+
+    Keeps imports from pytest, unittest, stdlib, and dotted packages
+    (e.g. ``unittest.mock``).  Strips lines that import from local
+    single-word modules like the function under test.
+
+    Args:
+        test_source: Python test source code.
+
+    Returns:
+        Source with local import lines removed.
+    """
+    lines = []
+    for line in test_source.splitlines():
+        m = re.match(r"^from\s+(\w+)\s+import\s+", line)
+        if m and m.group(1) not in _STDLIB_AND_TEST:
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _run_exploit_pytest(test_source: str, exploit_code: str) -> bool:
     """Run pytest for generated tests against exploit implementation.
 
@@ -97,8 +114,9 @@ def _run_exploit_pytest(test_source: str, exploit_code: str) -> bool:
         test_path = temp_path / "test_generated.py"
 
         exploit_path.write_text(exploit_code, encoding="utf-8")
+        cleaned = _strip_local_imports(test_source)
         test_path.write_text(
-            "from exploit_impl import *\n\n" + test_source + "\n",
+            "from exploit_impl import *\n\n" + cleaned + "\n",
             encoding="utf-8",
         )
 

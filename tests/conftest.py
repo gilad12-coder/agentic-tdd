@@ -6,6 +6,11 @@ import pytest
 
 @pytest.fixture
 def minimal_spec():
+    """Provide a minimal ParsedSpec for testing.
+
+    Returns:
+        ParsedSpec with name "add" and basic examples.
+    """
     from orchestrator.models import ParsedSpec
 
     return ParsedSpec(
@@ -23,6 +28,11 @@ def minimal_spec():
 
 @pytest.fixture
 def minimal_constraints():
+    """Provide minimal TaskConstraints for testing.
+
+    Returns:
+        TaskConstraints with basic primary and secondary constraints.
+    """
     from orchestrator.models import ConstraintSet, TaskConstraints
 
     return TaskConstraints(
@@ -39,4 +49,9 @@ def minimal_constraints():
 
 @pytest.fixture
 def orchestrator_constraints_path():
+    """Provide the path to the orchestrator constraints YAML file.
+
+    Returns:
+        Path to constraints/orchestrator.yaml.
+    """
     return Path(__file__).parent.parent / "constraints" / "orchestrator.yaml"

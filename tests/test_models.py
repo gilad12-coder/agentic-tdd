@@ -16,7 +16,10 @@ from orchestrator.models import (
 
 
 class TestConstraintSet:
+    """Tests for ConstraintSet."""
+
     def test_constraint_set_all_fields_optional(self):
+        """Test that all ConstraintSet fields default to None."""
         cs = ConstraintSet()
         assert cs.max_cyclomatic_complexity is None
         assert cs.max_lines_per_function is None
@@ -25,12 +28,14 @@ class TestConstraintSet:
         assert cs.allowed_imports is None
 
     def test_constraint_set_rejects_invalid_values(self):
+        """Test that ConstraintSet rejects negative or zero values."""
         with pytest.raises(ValidationError):
             ConstraintSet(max_cyclomatic_complexity=-1)
         with pytest.raises(ValidationError):
             ConstraintSet(max_lines_per_function=0)
 
     def test_constraint_set_accepts_valid_values(self):
+        """Test that ConstraintSet accepts valid constraint values."""
         cs = ConstraintSet(
             max_cyclomatic_complexity=5,
             max_lines_per_function=50,
@@ -43,6 +48,7 @@ class TestConstraintSet:
         assert cs.allowed_imports == ["os", "sys"]
 
     def test_constraint_set_allowed_imports_list(self):
+        """Test that allowed_imports stores a list of strings."""
         cs = ConstraintSet(allowed_imports=["os", "pathlib"])
         assert isinstance(cs.allowed_imports, list)
         assert all(isinstance(i, str) for i in cs.allowed_imports)
@@ -52,7 +58,10 @@ class TestConstraintSet:
 
 
 class TestTaskConstraints:
+    """Tests for TaskConstraints."""
+
     def test_task_constraints_has_primary_and_secondary(self):
+        """Test that TaskConstraints has primary and secondary ConstraintSets."""
         tc = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=5),
             secondary=ConstraintSet(require_docstrings=True),
@@ -62,6 +71,7 @@ class TestTaskConstraints:
         assert isinstance(tc.secondary, ConstraintSet)
 
     def test_task_constraints_has_target_files(self):
+        """Test that TaskConstraints stores target file paths."""
         tc = TaskConstraints(
             primary=ConstraintSet(),
             secondary=ConstraintSet(),
@@ -70,6 +80,7 @@ class TestTaskConstraints:
         assert tc.target_files == ["src/a.py", "src/b.py"]
 
     def test_task_constraints_from_dict(self):
+        """Test that TaskConstraints can be constructed from a dict."""
         data = {
             "primary": {"max_cyclomatic_complexity": 10},
             "secondary": {"require_docstrings": True},
@@ -80,6 +91,7 @@ class TestTaskConstraints:
         assert tc.secondary.require_docstrings is True
 
     def test_task_constraints_empty_sections_valid(self):
+        """Test that TaskConstraints accepts empty constraint sections."""
         tc = TaskConstraints(
             primary=ConstraintSet(),
             secondary=ConstraintSet(),
@@ -89,6 +101,7 @@ class TestTaskConstraints:
         assert tc.secondary.require_docstrings is None
 
     def test_task_constraints_same_type_in_both(self):
+        """Test that the same constraint type can appear in both sections."""
         tc = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=5),
             secondary=ConstraintSet(max_cyclomatic_complexity=3),
@@ -102,7 +115,10 @@ class TestTaskConstraints:
 
 
 class TestCLIResult:
+    """Tests for CLIResult."""
+
     def test_cli_result_stores_all_fields(self):
+        """Test that CLIResult stores stdout, stderr, exit_code, and parsed_json."""
         result = CLIResult(
             stdout="hello world",
             stderr="",
@@ -115,6 +131,7 @@ class TestCLIResult:
         assert result.parsed_json == {"key": "value"}
 
     def test_cli_result_parsed_json_optional(self):
+        """Test that CLIResult allows parsed_json to be None."""
         result = CLIResult(stdout="text", stderr="", exit_code=0, parsed_json=None)
         assert result.parsed_json is None
 
@@ -123,7 +140,10 @@ class TestCLIResult:
 
 
 class TestFunctionSpec:
+    """Tests for FunctionSpec."""
+
     def test_function_spec_optional_fields(self):
+        """Test that FunctionSpec optional fields have sensible defaults."""
         fs = FunctionSpec(name="logout")
         assert fs.description == ""
         assert fs.signature is None
@@ -132,7 +152,10 @@ class TestFunctionSpec:
 
 
 class TestParsedSpec:
+    """Tests for ParsedSpec."""
+
     def test_parsed_spec_required_fields(self):
+        """Test that ParsedSpec stores required fields correctly."""
         spec = ParsedSpec(
             name="is_palindrome",
             description="Check if string is palindrome",
@@ -143,10 +166,12 @@ class TestParsedSpec:
         assert len(spec.examples) == 1
 
     def test_parsed_spec_required_fields_missing(self):
+        """Test that ParsedSpec raises when required fields are missing."""
         with pytest.raises(ValidationError):
             ParsedSpec(name="test")  # type: ignore[call-arg]
 
     def test_parsed_spec_optional_fields(self):
+        """Test that ParsedSpec stores optional fields when provided."""
         spec = ParsedSpec(
             name="add",
             description="Add two numbers",
@@ -156,6 +181,7 @@ class TestParsedSpec:
         assert spec.signature == "(a: int, b: int) -> int"
 
     def test_parsed_spec_optional_fields_default(self):
+        """Test that ParsedSpec optional fields default to None."""
         spec = ParsedSpec(
             name="add",
             description="Add two numbers",
@@ -164,6 +190,7 @@ class TestParsedSpec:
         assert spec.signature is None
 
     def test_parsed_spec_constraint_profile_default(self):
+        """Test that ParsedSpec defaults to the 'default' constraint profile."""
         spec = ParsedSpec(
             name="add",
             description="Add two numbers",
@@ -172,6 +199,7 @@ class TestParsedSpec:
         assert spec.constraint_profile == "default"
 
     def test_parsed_spec_target_files_default(self):
+        """Test that ParsedSpec defaults to an empty target files list."""
         spec = ParsedSpec(
             name="add",
             description="Add two numbers",
@@ -180,6 +208,7 @@ class TestParsedSpec:
         assert spec.target_files == []
 
     def test_parsed_spec_functions_list(self):
+        """Test that ParsedSpec stores a list of FunctionSpec objects."""
         spec = ParsedSpec(
             name="auth_system",
             description="Auth module",
@@ -194,6 +223,7 @@ class TestParsedSpec:
         assert spec.functions[1].name == "logout"
 
     def test_parsed_spec_functions_default(self):
+        """Test that ParsedSpec defaults to an empty functions list."""
         spec = ParsedSpec(
             name="add",
             description="Add two numbers",
@@ -206,7 +236,10 @@ class TestParsedSpec:
 
 
 class TestTestCritique:
+    """Tests for TestCritique."""
+
     def test_test_critique_stores_string_lists(self):
+        """Test that TestCritique stores lists of strings for all fields."""
         critique = TestCritique(
             exploit_vectors=["hardcode return values"],
             missing_edge_cases=["empty input"],
@@ -220,6 +253,7 @@ class TestTestCritique:
         assert all(isinstance(v, str) for v in critique.suggested_counter_tests)
 
     def test_test_critique_exploit_fields_optional(self):
+        """Test that TestCritique exploit fields have sensible defaults."""
         critique = TestCritique(
             exploit_vectors=["cheat"],
             missing_edge_cases=[],
@@ -243,7 +277,10 @@ class TestTestCritique:
 
 
 class TestConstraintResult:
+    """Tests for ConstraintResult."""
+
     def test_constraint_result_stores_violations_and_metrics(self):
+        """Test that ConstraintResult stores violations and metrics."""
         result = ConstraintResult(
             passed=False,
             violations=["cyclomatic complexity 12 > max 10"],
@@ -255,6 +292,7 @@ class TestConstraintResult:
         assert "cyclomatic_complexity" in result.metrics
 
     def test_constraint_result_passing(self):
+        """Test that a passing ConstraintResult has no violations."""
         result = ConstraintResult(passed=True, violations=[], metrics={})
         assert result.passed is True
         assert result.violations == []

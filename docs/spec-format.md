@@ -1,10 +1,14 @@
-# Spec File Format
+# Spec Format
 
 Spec files are YAML documents that describe the function(s) you want built. The orchestrator reads a spec and generates tests, critiques, and implementations from it.
 
+---
+
 ## Single-function spec
 
-```yaml
+The simplest case — one function, one file:
+
+```yaml title="spec.yaml"
 name: add
 description: |
   Adds two integers and returns their sum.
@@ -21,9 +25,15 @@ target_files:
   - "src/add.py"
 ```
 
+The `description` is the most important field. It tells the test generator *what* to test. Be specific — vague descriptions produce vague tests.
+
+---
+
 ## Multi-function spec
 
-```yaml
+For related functions that belong together:
+
+```yaml title="spec.yaml"
 name: auth_system
 description: Authentication system with login and logout.
 constraint_profile: default
@@ -45,6 +55,10 @@ functions:
         output: "True"
 ```
 
+Each function can override the top-level `constraint_profile`. Functions without their own profile inherit the top-level one.
+
+---
+
 ## Field reference
 
 ### Top-level fields
@@ -59,7 +73,7 @@ functions:
 | `target_files` | no | List of file paths where code should be written |
 | `functions` | no | List of function specs for multi-function tasks |
 
-### Function fields (within `functions:`)
+### Function fields
 
 | Field | Required | Description |
 |---|---|---|
@@ -69,7 +83,9 @@ functions:
 | `examples` | no | Input/output examples for this function |
 | `constraint_profile` | no | Override the top-level profile for this function |
 
-### Example formats
+---
+
+## Example formats
 
 Standard input/output pair:
 
@@ -79,15 +95,21 @@ examples:
     output: "3"
 ```
 
-Raw text example (freeform):
+Freeform description:
 
 ```yaml
 examples:
   - raw: "Returns empty list for negative input"
 ```
 
+!!! tip
+    Concrete input/output examples produce better tests than freeform descriptions. Use `raw` only when the behavior is hard to express as a single return value.
+
+---
+
 ## How specs are used
 
 1. **Test generation** — the description, signature, and examples are included in the LLM prompt that generates pytest tests.
 2. **Critique** — the spec is passed to the red-team critic so it can evaluate whether tests actually enforce the described behavior.
-3. **Constraint resolution** — the `constraint_profile` determines which constraints from `profiles.yaml` are applied. See [Constraint Profiles](configuration.md#constraint-profiles).
+3. **Constraint resolution** — the `constraint_profile` determines which constraints are applied. See [Constraint Profiles](configuration.md#constraint-profiles).
+4. **Plan generation** — after the critique loop, a `plan.md` is auto-generated for the implementation agent. It includes every non-None field from the spec: signatures, descriptions, examples, all resolved constraints (primary, secondary, guidance), and critique findings. The implementation agent receives the complete picture of what to build.

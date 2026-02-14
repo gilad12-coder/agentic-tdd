@@ -82,6 +82,36 @@ def display_status_table(state: SessionState, console: Console | None = None) ->
     c.print(table)
 
 
+def display_function_header(func_name: str, console: Console | None = None) -> None:
+    """Print a header indicating which function is being processed.
+
+    Args:
+        func_name: Name of the function being processed.
+        console: Optional console override for tests.
+    """
+    c = console or _console
+    c.print(f"\n[bold cyan]{'─' * 40}[/bold cyan]")
+    c.print(f"[bold cyan]Processing: {func_name}[/bold cyan]")
+    c.print(f"[bold cyan]{'─' * 40}[/bold cyan]\n")
+
+
+def display_session_complete(
+    state: SessionState, console: Console | None = None
+) -> None:
+    """Print a summary indicating the session is complete.
+
+    Args:
+        state: Final session state.
+        console: Optional console override for tests.
+    """
+    c = console or _console
+    done = sum(1 for p in state.function_progress if p.status == "done")
+    total = len(state.function_progress)
+    c.print(f"\n[bold green]{'─' * 40}[/bold green]")
+    c.print(f"[bold green]Session complete: {done}/{total} functions done[/bold green]")
+    c.print(f"[bold green]{'─' * 40}[/bold green]\n")
+
+
 def display_error(message: str, console: Console | None = None) -> None:
     """Print an error message in red.
 
@@ -103,3 +133,52 @@ def display_spinner_context(message: str):
         Rich status context manager.
     """
     return _console.status(message)
+
+
+def display_implementation_attempt(
+    attempt: int, max_attempts: int, console: Console | None = None
+) -> None:
+    """Print the current implementation attempt number.
+
+    Args:
+        attempt: Current attempt (1-based).
+        max_attempts: Maximum number of attempts allowed.
+        console: Optional console override for tests.
+    """
+    c = console or _console
+    c.print(
+        f"\n[bold yellow]Implementation attempt "
+        f"{attempt}/{max_attempts}...[/bold yellow]"
+    )
+
+
+def display_implementation_result(
+    passed: bool, console: Console | None = None
+) -> None:
+    """Print the implementation result.
+
+    Args:
+        passed: Whether all tests passed.
+        console: Optional console override for tests.
+    """
+    c = console or _console
+    if passed:
+        c.print("\n[bold green]All tests passed![/bold green]")
+    else:
+        c.print("\n[bold red]Implementation failed: tests did not pass.[/bold red]")
+
+
+def display_docker_status(
+    available: bool, console: Console | None = None
+) -> None:
+    """Print Docker availability status.
+
+    Args:
+        available: Whether Docker is available.
+        console: Optional console override for tests.
+    """
+    c = console or _console
+    if available:
+        c.print("[green]Docker is available for isolated testing.[/green]")
+    else:
+        c.print("[red]Docker is not available. Tests will run on host.[/red]")

@@ -39,18 +39,38 @@ PROFILES_DATA = {
 
 @pytest.fixture
 def profiles_path(tmp_path):
+    """Provide a temporary profiles YAML file for testing.
+
+    Args:
+        tmp_path: Pytest tmp_path fixture.
+
+    Returns:
+        Path to the temporary profiles YAML file.
+    """
     path = tmp_path / "profiles.yaml"
     path.write_text(yaml.dump(PROFILES_DATA))
     return path
 
 
 class TestLoadProfiles:
+    """Tests for load_profiles."""
+
     def test_load_profiles_returns_profile_names(self, profiles_path):
+        """Test that load_profiles returns all defined profile names.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         assert "default" in profiles
         assert "strict" in profiles
 
     def test_load_profiles_empty_raises(self, tmp_path):
+        """Test that load_profiles raises ValueError for empty files.
+
+        Args:
+            tmp_path: Pytest tmp_path fixture.
+        """
         path = tmp_path / "profiles.yaml"
         path.write_text("")
         with pytest.raises(ValueError):
@@ -58,7 +78,14 @@ class TestLoadProfiles:
 
 
 class TestResolveConstraints:
+    """Tests for resolve_constraints."""
+
     def test_resolve_constraints_strict_profile(self, profiles_path):
+        """Test that resolve_constraints applies strict profile values.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         spec = ParsedSpec(
             name="sort",
@@ -72,6 +99,11 @@ class TestResolveConstraints:
         assert result.primary.max_lines_per_function == 30
 
     def test_resolve_constraints_default_profile(self, profiles_path):
+        """Test that resolve_constraints falls back to the default profile.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         spec = ParsedSpec(
             name="unknown_func",
@@ -82,6 +114,11 @@ class TestResolveConstraints:
         assert result.primary.max_cyclomatic_complexity == 10
 
     def test_resolve_constraints_function_override_merges(self, profiles_path):
+        """Test that function-level overrides merge with profile constraints.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         spec = ParsedSpec(
             name="add",
@@ -97,6 +134,11 @@ class TestResolveConstraints:
         assert result.secondary.require_docstrings is True
 
     def test_resolve_constraints_unknown_profile_raises(self, profiles_path):
+        """Test that resolve_constraints raises ValueError for unknown profiles.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         spec = ParsedSpec(
             name="test",
@@ -108,6 +150,11 @@ class TestResolveConstraints:
             resolve_constraints(spec, profiles)
 
     def test_resolve_constraints_includes_guidance(self, profiles_path):
+        """Test that resolve_constraints includes guidance from the profile.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         spec = ParsedSpec(
             name="unknown_func",
@@ -119,6 +166,11 @@ class TestResolveConstraints:
         assert "Avoid inline comments unless ambiguous." in result.guidance
 
     def test_resolve_constraints_function_guidance_replaces(self, profiles_path):
+        """Test that function-level guidance replaces profile guidance.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         profiles["functions"]["add"]["guidance"] = ["Custom guidance for add."]
         spec = ParsedSpec(
@@ -130,6 +182,11 @@ class TestResolveConstraints:
         assert result.guidance == ["Custom guidance for add."]
 
     def test_resolve_constraints_per_function_profile(self, profiles_path):
+        """Test that per-function profiles override task-level profiles.
+
+        Args:
+            profiles_path: Path to test profiles YAML.
+        """
         profiles = load_profiles(profiles_path)
         spec = ParsedSpec(
             name="auth_system",
@@ -174,7 +231,14 @@ MULTI_FUNCTION_SPEC = {
 
 
 class TestEndToEnd:
+    """End-to-end tests for spec-to-constraints resolution."""
+
     def test_spec_to_constraints_end_to_end(self, tmp_path):
+        """Test that spec parsing and constraint resolution work together.
+
+        Args:
+            tmp_path: Pytest tmp_path fixture.
+        """
         spec_file = tmp_path / "spec.yaml"
         spec_file.write_text(yaml.dump(MULTI_FUNCTION_SPEC))
         profiles_file = tmp_path / "profiles.yaml"

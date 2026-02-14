@@ -1,10 +1,14 @@
-# Constraint Reference
+# Constraints
 
 34 constraints are available, all mechanically checked via Python AST analysis. No runtime execution needed.
 
 Use any combination in `primary` or `secondary` gates in your [constraint profiles](configuration.md#constraint-profiles).
 
+---
+
 ## Complexity & Size
+
+Control how large and complex functions are allowed to be.
 
 | Constraint | Type | Description |
 |---|---|---|
@@ -18,17 +22,18 @@ Use any combination in `primary` or `secondary` gates in your [constraint profil
 | `max_return_statements` | `int` | Max `return` statements in any single function. |
 | `max_local_variables` | `int` | Max local variables in any single function (excludes parameters). |
 
-### Example
+??? example "Example profile"
+    ```yaml
+    primary:
+      max_cyclomatic_complexity: 10
+      max_cognitive_complexity: 15
+      max_lines_per_function: 50
+      max_parameters: 5
+      max_nested_depth: 3
+      max_time_complexity: "O(n log n)"
+    ```
 
-```yaml
-primary:
-  max_cyclomatic_complexity: 10
-  max_cognitive_complexity: 15
-  max_lines_per_function: 50
-  max_parameters: 5
-  max_nested_depth: 3
-  max_time_complexity: "O(n log n)"
-```
+---
 
 ## Correctness
 
@@ -41,26 +46,27 @@ These catch real bugs — patterns that will cause incorrect behavior at runtime
 | `no_return_in_finally` | Disallow `return`, `break`, or `continue` inside `finally` blocks. These silently swallow any exception that was propagating. |
 | `no_unreachable_code` | Disallow statements after `return`, `raise`, `break`, or `continue`. Dead code is either a logic error or leftover from refactoring. |
 | `no_duplicate_dict_keys` | Disallow duplicate constant keys in dict literals (`{'a': 1, 'a': 2}`). The second value silently overwrites the first. |
-| `no_loop_variable_closure` | Disallow closures (lambdas/nested functions) inside `for` loops that capture the loop variable without a default argument. All closures will share the loop variable's final value. |
+| `no_loop_variable_closure` | Disallow closures inside `for` loops that capture the loop variable without a default argument. All closures will share the loop variable's final value. |
 | `no_mutable_defaults` | Disallow mutable literals as default arguments (`def f(x=[])`). The default is shared across all calls, causing cross-call contamination. |
 | `no_mutable_call_in_defaults` | Disallow function calls as default arguments (`def f(ts=datetime.now())`). The call executes once at definition time, not per call. Allows known-safe calls like `frozenset()`, `tuple()`, `Field()`. |
 | `no_shadowing_builtins` | Disallow variable or function names that shadow Python builtins (`list`, `dict`, `type`, `id`, `input`, `open`, etc.). |
 | `no_open_without_context_manager` | Disallow `open()` without a `with` statement. File descriptors leak if an exception occurs before `close()`. |
 
-### Example
+??? example "Example profile"
+    ```yaml
+    primary:
+      no_bare_except: true
+      no_unreachable_code: true
+      no_mutable_defaults: true
+      no_mutable_call_in_defaults: true
+      no_duplicate_dict_keys: true
+    ```
 
-```yaml
-primary:
-  no_bare_except: true
-  no_unreachable_code: true
-  no_mutable_defaults: true
-  no_mutable_call_in_defaults: true
-  no_duplicate_dict_keys: true
-```
+---
 
 ## Security
 
-These prevent common vulnerability patterns.
+Prevent common vulnerability patterns.
 
 | Constraint | Description |
 |---|---|
@@ -72,18 +78,19 @@ These prevent common vulnerability patterns.
 | `no_hardcoded_secrets` | Disallow string literals assigned to variables named `password`, `secret`, `token`, `api_key`, `access_key`, `secret_key`, or `private_key`. Credentials belong in environment variables or secret managers. |
 | `no_requests_without_timeout` | Disallow `requests.get()`, `requests.post()`, etc. without a `timeout` parameter. Requests without timeouts can hang indefinitely. |
 
-### Example
+??? example "Example profile"
+    ```yaml
+    primary:
+      no_eval: true
+      no_exec: true
+      no_unsafe_deserialization: true
+      no_unsafe_yaml: true
+      no_shell_true: true
+      no_hardcoded_secrets: true
+      no_requests_without_timeout: true
+    ```
 
-```yaml
-primary:
-  no_eval: true
-  no_exec: true
-  no_unsafe_deserialization: true
-  no_unsafe_yaml: true
-  no_shell_true: true
-  no_hardcoded_secrets: true
-  no_requests_without_timeout: true
-```
+---
 
 ## Style & Documentation
 
@@ -98,20 +105,25 @@ primary:
 | `no_nested_imports` | Disallow import statements inside functions. Usually a workaround for circular imports, indicating a design issue. |
 | `allowed_imports` | Whitelist of allowed import module names. Any import not in this list is flagged. |
 
-### Example
+??? example "Example profile"
+    ```yaml
+    secondary:
+      require_docstrings: true
+      require_type_annotations: true
+      no_print_statements: true
+      no_debugger_statements: true
+      allowed_imports: ["os", "sys", "json", "pathlib"]
+    ```
 
-```yaml
-secondary:
-  require_docstrings: true
-  require_type_annotations: true
-  no_print_statements: true
-  no_debugger_statements: true
-  allowed_imports: ["os", "sys", "json", "pathlib"]
-```
+---
 
 ## Quick-copy profiles
 
+Ready-to-use profiles. Copy the one that fits your needs into `constraints/profiles.yaml`.
+
 ### Minimal
+
+Just keep complexity in check:
 
 ```yaml
 profiles:
@@ -121,6 +133,8 @@ profiles:
 ```
 
 ### Recommended
+
+Catches real bugs and common security issues:
 
 ```yaml
 profiles:
@@ -143,6 +157,8 @@ profiles:
 ```
 
 ### Strict
+
+Everything on. For when you want the tightest possible output:
 
 ```yaml
 profiles:

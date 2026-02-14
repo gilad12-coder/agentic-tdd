@@ -25,11 +25,12 @@ def build_command(prompt: str, agent: str, model: str, budget: float) -> list[st
             "--output-format", "json",
             "--model", model,
             "--max-budget-usd", str(budget),
-            "--allowedTools", "Edit,Write,Read",
+            "--allowedTools", "",
         ]
     elif agent == "codex":
         return [
             "codex",
+            "exec",
             "--model", model,
             prompt,
         ]
@@ -72,15 +73,21 @@ def parse_cli_output(stdout: str, stderr: str, exit_code: int) -> CLIResult:
         exit_code: Process exit code.
 
     Returns:
-        CLIResult with parsed output.
+        CLIResult with parsed output. When the output is Claude JSON format,
+        the result text is extracted into stdout for downstream processing.
     """
     parsed_json = None
     try:
         parsed_json = json.loads(stdout)
     except (json.JSONDecodeError, ValueError):
         pass
+
+    effective_stdout = stdout
+    if parsed_json and isinstance(parsed_json, dict) and "result" in parsed_json:
+        effective_stdout = parsed_json["result"]
+
     return CLIResult(
-        stdout=stdout,
+        stdout=effective_stdout,
         stderr=stderr,
         exit_code=exit_code,
         parsed_json=parsed_json,

@@ -10,17 +10,25 @@ def extract_python_from_response(response: str) -> str:
     """Extract Python source code from an LLM response.
 
     Args:
-        response: LLM response text.
+        response: LLM response text, possibly with markdown fences.
 
     Returns:
-        Extracted Python code.
+        Extracted Python code, or empty string if none found.
     """
     blocks = re.findall(r"```python\s*\n(.*?)```", response, re.DOTALL)
     if blocks:
         code = "\n\n".join(blocks)
-        ast.parse(code)
-        return code
+        try:
+            ast.parse(code)
+            return code
+        except SyntaxError:
+            pass
 
     # Try raw response as Python
-    ast.parse(response)
-    return response
+    try:
+        ast.parse(response)
+        return response
+    except SyntaxError:
+        pass
+
+    return ""

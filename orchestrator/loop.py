@@ -5,6 +5,7 @@ from pathlib import Path
 
 from orchestrator.cli_runner import build_implementation_command, run_cli_agent
 from orchestrator.config import Config
+from orchestrator.constraint_checks import check_constraints
 from orchestrator.constraint_loader import load_profiles, resolve_constraints
 from orchestrator.critic import parse_critique, run_exploit_check
 from orchestrator.prompts import (
@@ -14,7 +15,12 @@ from orchestrator.prompts import (
 )
 from orchestrator.display import (
     display_critique_report,
+    display_docker_status,
     display_error,
+    display_function_header,
+    display_implementation_attempt,
+    display_implementation_result,
+    display_session_complete,
     display_spinner_context,
     display_test_source,
 )
@@ -31,13 +37,23 @@ from orchestrator.spec_intake import parse_spec
 from orchestrator.test_generator import extract_python_from_response
 
 
-def run_session(spec_path: Path, profiles_path: Path, session_path: Path) -> SessionState:
+def run_session(
+    spec_path: Path,
+    profiles_path: Path,
+    session_path: Path,
+    auto_tests: bool = False,
+    auto_critique: bool = False,
+    auto_implement: bool = False,
+) -> SessionState:
     """Run or resume an orchestrator session for all unfinished functions.
 
     Args:
         spec_path: Path to the task specification YAML file.
         profiles_path: Path to the constraints profiles YAML file.
         session_path: Path to persisted session JSON state.
+        auto_tests: When True, auto-approve generated tests.
+        auto_critique: When True, auto-accept critique reviews.
+        auto_implement: When True, run implementation after all functions done.
 
     Returns:
         Final session state after processing pending functions.
@@ -55,15 +71,41 @@ def run_session(spec_path: Path, profiles_path: Path, session_path: Path) -> Ses
         if progress.status == FunctionStatus.done:
             continue
         constraints = resolve_constraints(spec, profiles, progress.name)
-        updated = process_function(progress.name, spec, constraints, config)
+        display_function_header(progress.name)
+        updated = process_function(
+            progress.name, spec, constraints, config,
+            auto_tests=auto_tests, auto_critique=auto_critique,
+        )
         state.function_progress[index] = updated
         save_session(state, session_path)
+
+    display_session_complete(state)
+
+    if auto_implement:
+        from orchestrator.sandbox import check_docker_available
+
+        use_docker = check_docker_available()
+        display_docker_status(use_docker)
+        constraints_map = {
+            p.name: resolve_constraints(spec, profiles, p.name)
+            for p in state.function_progress
+        }
+        success = run_implementation(
+            state, config, spec=spec,
+            constraints_map=constraints_map, use_docker=use_docker,
+        )
+        display_implementation_result(success)
 
     return state
 
 
 def process_function(
-    func_name: str, spec: ParsedSpec, constraints: TaskConstraints, config: Config
+    func_name: str,
+    spec: ParsedSpec,
+    constraints: TaskConstraints,
+    config: Config,
+    auto_tests: bool = False,
+    auto_critique: bool = False,
 ) -> FunctionProgress:
     """Generate tests for one function, request approval, then run critique.
 
@@ -72,39 +114,43 @@ def process_function(
         spec: Parsed task specification.
         constraints: Resolved constraints for this function.
         config: Runtime configuration for model selection and limits.
+        auto_tests: When True, auto-approve generated tests.
+        auto_critique: When True, auto-accept critique reviews.
 
     Returns:
         Completed function progress object including tests and critique.
     """
     function_spec = _spec_for_function(spec, func_name)
-    approved_source = ""
     max_attempts = max(config.max_iterations, 1)
 
-    for _ in range(max_attempts):
-        test_source = generate_tests(function_spec, constraints, config)
-        approved, selected_source = prompt_user_review(test_source)
-        if approved:
-            approved_source = selected_source
-            break
-    else:
-        raise RuntimeError(
-            f"Exceeded max_iterations={config.max_iterations} for {func_name}"
+    max_critique_cycles = 2 if auto_critique else max_attempts
+    critique_feedback = ""
+    for _ in range(max_critique_cycles):
+        approved_source = _generate_and_approve(
+            function_spec, constraints, config, max_attempts, critique_feedback,
+            auto=auto_tests,
         )
-
-    critique = run_critique(
-        approved_source,
-        function_spec,
-        config,
-        constraints=constraints,
-    )
-    exploit_passed, exploit_code = run_exploit_check(
-        approved_source,
-        function_spec,
-        config,
-    )
-    critique.exploit_passed = exploit_passed
-    critique.exploit_code = exploit_code
-    print_critique_report(critique)
+        critique = run_critique(
+            approved_source,
+            function_spec,
+            config,
+            constraints=constraints,
+        )
+        exploit_passed, exploit_code = run_exploit_check(
+            approved_source,
+            function_spec,
+            config,
+        )
+        critique.exploit_passed = exploit_passed
+        critique.exploit_code = exploit_code
+        if prompt_critique_review(critique, auto=auto_critique):
+            return FunctionProgress(
+                name=func_name,
+                status=FunctionStatus.done,
+                test_source=approved_source,
+                critique=critique,
+            )
+        critique_feedback = _format_critique_feedback(critique)
     return FunctionProgress(
         name=func_name,
         status=FunctionStatus.done,
@@ -113,18 +159,79 @@ def process_function(
     )
 
 
-def generate_tests(spec: ParsedSpec, constraints: TaskConstraints, config: Config) -> str:
+def _generate_and_approve(
+    function_spec: ParsedSpec,
+    constraints: TaskConstraints,
+    config: Config,
+    max_attempts: int,
+    critique_feedback: str = "",
+    auto: bool = False,
+) -> str:
+    """Run the generate → validate → user review loop until tests are approved.
+
+    Args:
+        function_spec: Parsed spec for the specific function.
+        constraints: Resolved constraints for this function.
+        config: Runtime configuration for generation.
+        max_attempts: Maximum generation attempts before raising.
+        critique_feedback: Critic findings from a previous cycle to address.
+        auto: When True, skip interactive prompts and auto-accept.
+
+    Returns:
+        User-approved test source code.
+    """
+    constraint_feedback = ""
+    for _ in range(max_attempts):
+        test_source = generate_tests(
+            function_spec, constraints, config, constraint_feedback,
+            critique_feedback,
+        )
+        if not test_source:
+            continue
+        syntax_ok, errors = validate_test_syntax(test_source)
+        if not syntax_ok:
+            display_error(f"Generated tests have syntax errors:\n{errors}")
+            display_error("Regenerating...")
+            continue
+        constraints_ok, violations = validate_test_constraints(test_source, constraints)
+        if not constraints_ok:
+            display_error(f"Generated tests violate constraints:\n{violations}")
+            display_error(
+                "Regenerating — feeding violations back to the agent..."
+            )
+            constraint_feedback = violations
+            continue
+        constraint_feedback = ""
+        approved, selected_source = prompt_user_review(test_source, auto=auto)
+        if approved:
+            return selected_source
+    raise RuntimeError(
+        f"Exceeded max_iterations={config.max_iterations} for test generation"
+    )
+
+
+def generate_tests(
+    spec: ParsedSpec,
+    constraints: TaskConstraints,
+    config: Config,
+    constraint_feedback: str = "",
+    critique_feedback: str = "",
+) -> str:
     """Generate pytest test source for a parsed spec using the generation agent.
 
     Args:
         spec: Parsed function or task specification.
         constraints: Constraints to include in the generation prompt.
         config: Runtime configuration for generation model and budget.
+        constraint_feedback: Violations from a previous attempt to fix on retry.
+        critique_feedback: Critic findings from a previous cycle to address.
 
     Returns:
         Extracted Python test source code.
     """
-    prompt = build_generation_prompt(spec, constraints)
+    prompt = build_generation_prompt(
+        spec, constraints, constraint_feedback, critique_feedback
+    )
     with display_spinner_context("Generating tests..."):
         result = run_cli_agent(
             prompt,
@@ -138,16 +245,19 @@ def generate_tests(spec: ParsedSpec, constraints: TaskConstraints, config: Confi
     return extract_python_from_response(result.stdout)
 
 
-def prompt_user_review(test_source: str) -> tuple[bool, str]:
+def prompt_user_review(test_source: str, auto: bool = False) -> tuple[bool, str]:
     """Prompt the user to approve or regenerate generated test source.
 
     Args:
         test_source: Generated Python test source code.
+        auto: When True, auto-approve without prompting.
 
     Returns:
         Tuple of (approved, selected_source). Rejected output returns empty source.
     """
     display_test_source(test_source)
+    if auto:
+        return True, test_source
 
     while True:
         decision = input("Review: [a]pprove / [e]dit / [r]egenerate: ").strip().lower()
@@ -162,6 +272,29 @@ def prompt_user_review(test_source: str) -> tuple[bool, str]:
                 display_test_source(test_source)
             continue
         print("Enter 'a', 'e', or 'r'.")
+
+
+def prompt_critique_review(critique: TestCritique, auto: bool = False) -> bool:
+    """Display critique results and prompt user to finish or improve tests.
+
+    Args:
+        critique: Structured critique of generated tests.
+        auto: When True, auto-done without prompting.
+
+    Returns:
+        True if done (move on), False to improve tests using critique feedback.
+    """
+    display_critique_report(critique)
+    if auto:
+        return not getattr(critique, "exploit_passed", False)
+
+    while True:
+        decision = input("Critique: [i]mprove tests / [d]one: ").strip().lower()
+        if decision in {"d", "done"}:
+            return True
+        if decision in {"i", "improve"}:
+            return False
+        print("Enter 'i' or 'd'.")
 
 
 def run_critique(
@@ -232,36 +365,129 @@ def _open_in_editor(source: str) -> str | None:
         temp_path.unlink(missing_ok=True)
 
 
+def validate_test_syntax(test_source: str) -> tuple[bool, str]:
+    """Check that generated test source has valid Python syntax.
+
+    Args:
+        test_source: Generated Python test source code.
+
+    Returns:
+        Tuple of (passed, error_output). passed is True if syntax is valid.
+    """
+    import ast
+
+    try:
+        ast.parse(test_source)
+    except SyntaxError as e:
+        return False, f"Syntax error: {e}"
+    if not test_source.strip():
+        return False, "Empty test source"
+    return True, ""
+
+
+def validate_test_constraints(
+    test_source: str, constraints: TaskConstraints
+) -> tuple[bool, str]:
+    """Check that generated test source satisfies the task constraints.
+
+    Args:
+        test_source: Generated Python test source code.
+        constraints: Resolved constraints for this function.
+
+    Returns:
+        Tuple of (passed, error_output). passed is True if all constraints met.
+    """
+    primary, secondary = check_constraints(test_source, constraints)
+    violations = primary.violations + secondary.violations
+    if violations:
+        return False, "\n".join(violations)
+    return True, ""
+
+
 def run_implementation(
     state: SessionState,
     config: Config,
     test_dir: Path = Path("tests"),
+    spec: ParsedSpec | None = None,
+    constraints_map: dict[str, TaskConstraints] | None = None,
+    use_docker: bool = False,
 ) -> bool:
-    """Run implementation generation and verify by executing pytest.
+    """Run implementation generation with retry loop and optional Docker.
+
+    When *spec* and *constraints_map* are provided, a ``plan.md`` is
+    generated and included in the agent prompt.  The implementation agent
+    runs on the host while pytest verification can optionally run inside
+    a Docker container for isolation.
 
     Args:
         state: Session state containing approved test source per function.
         config: Runtime configuration for implementation model selection.
         test_dir: Directory where generated tests are written.
+        spec: Optional parsed spec for plan generation.
+        constraints_map: Optional map of function name to constraints.
+        use_docker: When True, run pytest inside a Docker container.
 
     Returns:
-        True when pytest exits with code 0, otherwise False.
+        True when all tests pass, otherwise False after max retries.
     """
     test_dir.mkdir(parents=True, exist_ok=True)
     generated_paths = _write_generated_tests(state, test_dir)
-    prompt = build_implementation_prompt(generated_paths)
-    command = build_implementation_command(
-        prompt,
-        config.implementation_agent,
-        config.implementation_model,
-    )
-    subprocess.run(command, capture_output=True, text=True)
+
+    plan_path = None
+    if spec is not None and constraints_map is not None:
+        from orchestrator.plan_generator import (
+            build_implementation_plan,
+            write_plan_to_workspace,
+        )
+        plan_content = build_implementation_plan(state, spec, constraints_map)
+        plan_path = write_plan_to_workspace(plan_content, test_dir.parent)
+
+    max_attempts = max(config.max_iterations, 1)
+    error_feedback = ""
+    for attempt in range(1, max_attempts + 1):
+        display_implementation_attempt(attempt, max_attempts)
+        prompt = build_implementation_prompt(
+            generated_paths, plan_path, error_feedback,
+        )
+        command = build_implementation_command(
+            prompt, config.implementation_agent, config.implementation_model,
+        )
+        subprocess.run(command)
+
+        passed, error_feedback = _verify_tests(
+            test_dir, use_docker,
+        )
+        if passed:
+            return True
+
+    return False
+
+
+def _verify_tests(
+    test_dir: Path, use_docker: bool
+) -> tuple[bool, str]:
+    """Run pytest and return pass/fail with captured output.
+
+    Args:
+        test_dir: Directory containing test files.
+        use_docker: When True, run pytest inside a Docker container.
+
+    Returns:
+        Tuple of (passed, error_output).
+    """
+    if use_docker:
+        from orchestrator.sandbox import run_pytest_in_docker
+        result = run_pytest_in_docker(test_dir.parent)
+        return result.passed, result.stdout + result.stderr
     pytest_result = subprocess.run(
         ["pytest", str(test_dir), "-v"],
         capture_output=True,
         text=True,
     )
-    return pytest_result.returncode == 0
+    return (
+        pytest_result.returncode == 0,
+        pytest_result.stdout + pytest_result.stderr,
+    )
 
 
 def _spec_for_function(spec: ParsedSpec, func_name: str) -> ParsedSpec:
@@ -295,6 +521,25 @@ def _spec_for_function(spec: ParsedSpec, func_name: str) -> ParsedSpec:
         target_files=list(spec.target_files),
         functions=list(spec.functions),
     )
+
+
+def _format_critique_feedback(critique: TestCritique) -> str:
+    """Format a critique into feedback text for the generation prompt.
+
+    Args:
+        critique: Structured critique from the critic.
+
+    Returns:
+        Formatted feedback string summarizing critic findings.
+    """
+    parts = []
+    if critique.missing_edge_cases:
+        parts.append("Missing edge cases to add (pick the most important):")
+        parts.extend(f"  - {c}" for c in critique.missing_edge_cases[:5])
+    if critique.exploit_passed:
+        parts.append("Warning: a cheating implementation passed your tests.")
+        parts.append("Add tests with dynamic/random inputs to prevent hardcoding.")
+    return "\n".join(parts)
 
 
 def _write_generated_tests(state: SessionState, test_dir: Path) -> list[Path]:

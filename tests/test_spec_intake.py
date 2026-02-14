@@ -52,7 +52,14 @@ MINIMAL_SPEC = {
 
 
 class TestParseSpec:
+    """Tests for parse_spec."""
+
     def test_parse_spec_extracts_name(self, tmp_path):
+        """Test that parse_spec extracts the spec name from YAML.
+
+        Args:
+            tmp_path: Pytest tmp_path fixture.
+        """
         spec_file = tmp_path / "spec.yaml"
         spec_file.write_text(yaml.dump(FULL_SPEC))
         result = parse_spec(spec_file)
@@ -60,6 +67,11 @@ class TestParseSpec:
         assert result.name == "add"
 
     def test_parse_spec_extracts_functions_list(self, tmp_path):
+        """Test that parse_spec extracts the functions list from YAML.
+
+        Args:
+            tmp_path: Pytest tmp_path fixture.
+        """
         spec_file = tmp_path / "spec.yaml"
         spec_file.write_text(yaml.dump(MULTI_FUNCTION_SPEC))
         result = parse_spec(spec_file)
@@ -71,6 +83,11 @@ class TestParseSpec:
         assert result.functions[1].constraint_profile is None
 
     def test_parse_spec_defaults_with_minimal_input(self, tmp_path):
+        """Test that parse_spec applies defaults for minimal spec input.
+
+        Args:
+            tmp_path: Pytest tmp_path fixture.
+        """
         spec_file = tmp_path / "spec.yaml"
         spec_file.write_text(yaml.dump(MINIMAL_SPEC))
         result = parse_spec(spec_file)
@@ -82,6 +99,11 @@ class TestParseSpec:
         assert result.functions == []
 
     def test_parse_spec_empty_file_raises_value_error(self, tmp_path):
+        """Test that parse_spec raises ValueError for empty files.
+
+        Args:
+            tmp_path: Pytest tmp_path fixture.
+        """
         spec_file = tmp_path / "spec.yaml"
         spec_file.write_text("")
         with pytest.raises(ValueError):

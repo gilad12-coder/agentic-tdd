@@ -2,6 +2,8 @@
 
 ## Environment variables
 
+The orchestrator reads agent and budget settings from environment variables. All have sensible defaults — you don't need to set any of them to get started.
+
 | Variable | Default | Description |
 |---|---|---|
 | `GENERATION_AGENT` | `claude` | Agent for test generation (`claude` or `codex`) |
@@ -12,6 +14,8 @@
 | `IMPLEMENTATION_MODEL` | `gpt-5.3-codex` | Model for implementation |
 | `MAX_ITERATIONS` | `10` | Max regeneration attempts per function |
 | `MAX_BUDGET_USD` | `5.0` | Budget cap per agent call |
+
+---
 
 ## Prerequisites
 
@@ -31,11 +35,13 @@ npm install -g @openai/codex
 codex auth login
 ```
 
+---
+
 ## Constraint profiles
 
-Profiles are defined in a YAML file (default: `constraints/profiles.yaml`) and map profile names to sets of constraints.
+Profiles define the quality rules applied to generated code. They live in a YAML file (default: `constraints/profiles.yaml`).
 
-```yaml
+```yaml title="constraints/profiles.yaml"
 profiles:
   default:
     primary:
@@ -47,7 +53,6 @@ profiles:
     primary:
       max_cyclomatic_complexity: 5
       max_lines_per_function: 30
-      max_time_complexity: "O(n)"
       no_eval: true
       no_exec: true
       no_bare_except: true
@@ -63,13 +68,18 @@ profiles:
 
 Each profile has three sections:
 
-- **`primary`** — hard limits. Code must pass all of these. If any fail, the code is rejected and secondary constraints are not checked.
-- **`secondary`** — style and quality rules. Only evaluated if all primary constraints pass. Failures are reported but may be advisory depending on your workflow.
-- **`guidance`** — freeform strings passed to the LLM in the prompt. Not mechanically checked. Use these for preferences that can't be expressed as static analysis rules.
+**`primary`** — Hard limits. Code must pass all of these. If any fail, the code is rejected and secondary constraints are not checked.
+
+**`secondary`** — Style and quality rules. Only evaluated if all primary constraints pass. Failures are reported but may be advisory depending on your workflow.
+
+**`guidance`** — Freeform strings passed to the LLM in the prompt. Not mechanically checked. Use these for preferences that can't be expressed as static analysis rules.
+
+!!! info
+    For all 34 available constraints, see the [Constraint Reference](constraints.md).
 
 ### Function-level overrides
 
-You can override constraints per function:
+You can override constraints for specific functions:
 
 ```yaml
 profiles:
@@ -85,16 +95,20 @@ functions:
       - "Never log passwords."
 ```
 
-Function overrides **merge** with the profile for primary/secondary (the function's constraints are added to or override the profile's). Guidance uses **replace** semantics — if a function defines guidance, it fully replaces the profile's guidance.
+Function overrides **merge** with the profile for primary/secondary. Guidance uses **replace** semantics — if a function defines guidance, it fully replaces the profile's guidance.
 
 ### Profile resolution order
 
 1. Look up the `constraint_profile` name from the spec (default: `"default"`)
 2. Load that profile from `profiles.yaml`
 3. If the function name has an entry under `functions:`, merge those overrides
-4. The resolved `TaskConstraints` is passed to the static analysis engine
+4. The resolved constraints are passed to the static analysis engine
+
+---
 
 ## CLI options
+
+### `atdd run`
 
 ```
 atdd run spec.yaml [OPTIONS]
@@ -104,6 +118,27 @@ atdd run spec.yaml [OPTIONS]
 |---|---|---|
 | `--profiles` | `constraints/profiles.yaml` | Path to constraint profiles file |
 | `--session` | `.session.json` | Path to session state file |
+| `-y` / `--auto` | off | Auto-accept both tests and critique |
+| `--auto-tests` | off | Auto-approve generated tests without prompting |
+| `--auto-critique` | off | Auto-accept critique without prompting |
+| `--implement` | off | Auto-run implementation in Docker after all functions complete |
+
+### `atdd implement`
+
+Run implementation separately on a completed session.
+
+```
+atdd implement --spec spec.yaml [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--spec` | *(required)* | Path to spec YAML file |
+| `--profiles` | `constraints/profiles.yaml` | Path to constraint profiles file |
+| `--session` | `.session.json` | Path to session state file |
+| `--no-docker` | off | Run pytest on host instead of in Docker |
+
+### `atdd status`
 
 ```
 atdd status [OPTIONS]
@@ -113,8 +148,15 @@ atdd status [OPTIONS]
 |---|---|---|
 | `--session` | `.session.json` | Path to session state file |
 
+---
+
 ## Session persistence
 
-The orchestrator saves progress after each function completes. If interrupted, re-running `atdd run` resumes from where it left off. Session state is stored as JSON at the path specified by `--session`.
+The orchestrator saves progress after each function completes. If interrupted, re-running `atdd run` resumes from where it left off.
 
-Use `atdd status` to view a table of all functions with their current progress.
+Session state is stored as JSON at the path specified by `--session`.
+
+```bash
+# Check where you left off
+atdd status
+```

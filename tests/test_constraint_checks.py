@@ -478,7 +478,10 @@ def add(a: int, b: int) -> int:
 
 
 class TestCheckConstraintsMetrics:
+    """Tests for individual constraint metric checks."""
+
     def test_check_constraints_simple_function_passes_complexity(self):
+        """Test that a simple function passes complexity constraints."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=5),
             secondary=ConstraintSet(),
@@ -490,6 +493,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.metrics["cyclomatic_complexity"] <= 2
 
     def test_check_constraints_branching_function_fails_complexity(self):
+        """Test that a branching function fails complexity constraints."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=3),
             secondary=ConstraintSet(),
@@ -501,6 +505,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.metrics["cyclomatic_complexity"] >= 5
 
     def test_check_constraints_long_function_fails_line_count(self):
+        """Test that a long function fails line count constraints."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_lines_per_function=10),
             secondary=ConstraintSet(),
@@ -511,6 +516,7 @@ class TestCheckConstraintsMetrics:
         assert any("lines" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_docstring_present_passes(self):
+        """Test that functions with docstrings pass the docstring check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(),
             secondary=ConstraintSet(require_docstrings=True),
@@ -524,6 +530,7 @@ class TestCheckConstraintsMetrics:
         assert any("docstring" in v.lower() for v in secondary_result.violations)
 
     def test_check_constraints_summary_only_docstring_fails(self):
+        """Test that a summary-only docstring fails when Args/Returns are expected."""
         constraints = TaskConstraints(
             primary=ConstraintSet(),
             secondary=ConstraintSet(require_docstrings=True),
@@ -537,6 +544,7 @@ class TestCheckConstraintsMetrics:
         )
 
     def test_check_constraints_forbidden_import_fails(self):
+        """Test that forbidden imports cause a constraint failure."""
         constraints = TaskConstraints(
             primary=ConstraintSet(allowed_imports=["os"]),
             secondary=ConstraintSet(),
@@ -547,6 +555,7 @@ class TestCheckConstraintsMetrics:
         assert any("subprocess" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_multi_function_one_exceeds_lines(self):
+        """Test that one function exceeding line limit fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_lines_per_function=10),
             secondary=ConstraintSet(),
@@ -556,6 +565,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.passed is False
 
     def test_check_constraints_o1_passes_on(self):
+        """Test that O(1) function passes O(n) time complexity constraint."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_time_complexity="O(n)"),
             secondary=ConstraintSet(),
@@ -566,6 +576,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.metrics["time_complexity"] == "O(1)"
 
     def test_check_constraints_on_passes_on(self):
+        """Test that O(n) function passes O(n) time complexity constraint."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_time_complexity="O(n)"),
             secondary=ConstraintSet(),
@@ -576,6 +587,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.metrics["time_complexity"] == "O(n)"
 
     def test_check_constraints_on2_fails_on(self):
+        """Test that O(n^2) function fails O(n) time complexity constraint."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_time_complexity="O(n)"),
             secondary=ConstraintSet(),
@@ -587,6 +599,7 @@ class TestCheckConstraintsMetrics:
         assert any("time complexity" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_on2_passes_on2(self):
+        """Test that O(n^2) function passes O(n^2) time complexity constraint."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_time_complexity="O(n^2)"),
             secondary=ConstraintSet(),
@@ -596,6 +609,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.passed is True
 
     def test_check_constraints_on3_fails_on2(self):
+        """Test that O(n^3) function fails O(n^2) time complexity constraint."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_time_complexity="O(n^2)"),
             secondary=ConstraintSet(),
@@ -606,6 +620,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.metrics["time_complexity"] == "O(n^3)"
 
     def test_check_constraints_max_parameters_passes(self):
+        """Test that a function with few parameters passes the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_parameters=3),
             secondary=ConstraintSet(),
@@ -616,6 +631,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.metrics["max_parameters"] == 2
 
     def test_check_constraints_max_parameters_fails(self):
+        """Test that a function with too many parameters fails the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_parameters=3),
             secondary=ConstraintSet(),
@@ -627,6 +643,7 @@ class TestCheckConstraintsMetrics:
         assert any("parameter" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_max_nested_depth_passes(self):
+        """Test that shallow nesting passes the depth constraint."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_nested_depth=2),
             secondary=ConstraintSet(),
@@ -636,6 +653,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.passed is True
 
     def test_check_constraints_max_nested_depth_fails(self):
+        """Test that deep nesting fails the depth constraint."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_nested_depth=2),
             secondary=ConstraintSet(),
@@ -646,6 +664,7 @@ class TestCheckConstraintsMetrics:
         assert any("nesting" in v.lower() or "depth" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_no_print_passes(self):
+        """Test that code without print statements passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_print_statements=True),
             secondary=ConstraintSet(),
@@ -655,6 +674,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.passed is True
 
     def test_check_constraints_no_print_fails(self):
+        """Test that code with print statements fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_print_statements=True),
             secondary=ConstraintSet(),
@@ -665,6 +685,7 @@ class TestCheckConstraintsMetrics:
         assert any("print" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_no_star_imports_passes(self):
+        """Test that code without star imports passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_star_imports=True),
             secondary=ConstraintSet(),
@@ -674,6 +695,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.passed is True
 
     def test_check_constraints_no_star_imports_fails(self):
+        """Test that code with star imports fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_star_imports=True),
             secondary=ConstraintSet(),
@@ -684,6 +706,7 @@ class TestCheckConstraintsMetrics:
         assert any("star" in v.lower() or "wildcard" in v.lower() or "*" in v for v in primary_result.violations)
 
     def test_check_constraints_no_mutable_defaults_passes(self):
+        """Test that code without mutable defaults passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_mutable_defaults=True),
             secondary=ConstraintSet(),
@@ -693,6 +716,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.passed is True
 
     def test_check_constraints_no_mutable_defaults_fails(self):
+        """Test that code with mutable defaults fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_mutable_defaults=True),
             secondary=ConstraintSet(),
@@ -703,6 +727,7 @@ class TestCheckConstraintsMetrics:
         assert any("mutable" in v.lower() or "default" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_no_global_state_passes(self):
+        """Test that code without global state passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_global_state=True),
             secondary=ConstraintSet(),
@@ -712,6 +737,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.passed is True
 
     def test_check_constraints_no_global_state_fails(self):
+        """Test that code with global state fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_global_state=True),
             secondary=ConstraintSet(),
@@ -722,6 +748,7 @@ class TestCheckConstraintsMetrics:
         assert any("global" in v.lower() for v in primary_result.violations)
 
     def test_check_constraints_max_return_statements_passes(self):
+        """Test that a function with few returns passes the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_return_statements=3),
             secondary=ConstraintSet(),
@@ -732,6 +759,7 @@ class TestCheckConstraintsMetrics:
         assert primary_result.metrics["max_return_statements"] == 2
 
     def test_check_constraints_max_return_statements_fails(self):
+        """Test that a function with many returns fails the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_return_statements=3),
             secondary=ConstraintSet(),
@@ -745,6 +773,7 @@ class TestCheckConstraintsMetrics:
     # --- Correctness constraints ---
 
     def test_no_bare_except_passes(self):
+        """Test that specific except clauses pass the bare except check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_bare_except=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -752,6 +781,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_bare_except_fails(self):
+        """Test that bare except clauses fail the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_bare_except=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -760,6 +790,7 @@ class TestCheckConstraintsMetrics:
         assert any("bare except" in v.lower() for v in result.violations)
 
     def test_no_try_except_pass_passes(self):
+        """Test that except with logging passes the silenced exception check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_try_except_pass=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -767,6 +798,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_try_except_pass_fails(self):
+        """Test that except with pass fails the silenced exception check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_try_except_pass=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -775,6 +807,7 @@ class TestCheckConstraintsMetrics:
         assert any("silenced" in v.lower() or "pass" in v.lower() for v in result.violations)
 
     def test_no_return_in_finally_passes(self):
+        """Test that finally without return passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_return_in_finally=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -782,6 +815,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_return_in_finally_fails(self):
+        """Test that return in finally block fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_return_in_finally=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -790,6 +824,7 @@ class TestCheckConstraintsMetrics:
         assert any("finally" in v.lower() for v in result.violations)
 
     def test_no_unreachable_code_passes(self):
+        """Test that reachable code passes the unreachable code check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_unreachable_code=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -797,6 +832,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_unreachable_code_fails(self):
+        """Test that unreachable code after return fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_unreachable_code=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -805,6 +841,7 @@ class TestCheckConstraintsMetrics:
         assert any("unreachable" in v.lower() for v in result.violations)
 
     def test_no_duplicate_dict_keys_passes(self):
+        """Test that unique dict keys pass the duplicate key check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_duplicate_dict_keys=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -812,6 +849,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_duplicate_dict_keys_fails(self):
+        """Test that duplicate dict keys fail the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_duplicate_dict_keys=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -820,6 +858,7 @@ class TestCheckConstraintsMetrics:
         assert any("duplicate" in v.lower() for v in result.violations)
 
     def test_no_loop_variable_closure_passes(self):
+        """Test that properly captured loop variables pass the closure check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_loop_variable_closure=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -827,6 +866,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_loop_variable_closure_fails(self):
+        """Test that uncaptured loop variable closures fail the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_loop_variable_closure=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -835,6 +875,7 @@ class TestCheckConstraintsMetrics:
         assert any("loop variable" in v.lower() or "closure" in v.lower() for v in result.violations)
 
     def test_no_mutable_call_defaults_passes(self):
+        """Test that non-call defaults pass the mutable call default check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_mutable_call_in_defaults=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -842,6 +883,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_mutable_call_defaults_fails(self):
+        """Test that function call defaults fail the mutable call default check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_mutable_call_in_defaults=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -850,6 +892,7 @@ class TestCheckConstraintsMetrics:
         assert any("call" in v.lower() or "default" in v.lower() for v in result.violations)
 
     def test_no_shadowing_builtins_passes(self):
+        """Test that non-builtin variable names pass the shadowing check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_shadowing_builtins=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -857,6 +900,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_shadowing_builtins_fails(self):
+        """Test that shadowing builtin names fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_shadowing_builtins=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -865,6 +909,7 @@ class TestCheckConstraintsMetrics:
         assert any("list" in v.lower() for v in result.violations)
 
     def test_no_open_without_with_passes(self):
+        """Test that open() inside a with statement passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_open_without_context_manager=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -872,6 +917,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_open_without_with_fails(self):
+        """Test that open() without a context manager fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_open_without_context_manager=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -882,6 +928,7 @@ class TestCheckConstraintsMetrics:
     # --- Security constraints ---
 
     def test_no_eval_passes(self):
+        """Test that code without eval passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_eval=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -889,6 +936,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_eval_fails(self):
+        """Test that code using eval fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_eval=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -897,6 +945,7 @@ class TestCheckConstraintsMetrics:
         assert any("eval" in v.lower() for v in result.violations)
 
     def test_no_exec_passes(self):
+        """Test that code without exec passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_exec=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -904,6 +953,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_exec_fails(self):
+        """Test that code using exec fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_exec=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -912,6 +962,7 @@ class TestCheckConstraintsMetrics:
         assert any("exec" in v.lower() for v in result.violations)
 
     def test_no_unsafe_deserialization_passes(self):
+        """Test that safe deserialization passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_unsafe_deserialization=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -919,6 +970,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_unsafe_deserialization_fails(self):
+        """Test that pickle usage fails the unsafe deserialization check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_unsafe_deserialization=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -927,6 +979,7 @@ class TestCheckConstraintsMetrics:
         assert any("deserialization" in v.lower() for v in result.violations)
 
     def test_no_unsafe_yaml_passes(self):
+        """Test that safe YAML loading passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_unsafe_yaml=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -934,6 +987,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_unsafe_yaml_fails(self):
+        """Test that unsafe YAML loading fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_unsafe_yaml=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -942,6 +996,7 @@ class TestCheckConstraintsMetrics:
         assert any("yaml" in v.lower() for v in result.violations)
 
     def test_no_shell_true_passes(self):
+        """Test that subprocess without shell=True passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_shell_true=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -949,6 +1004,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_shell_true_fails(self):
+        """Test that subprocess with shell=True fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_shell_true=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -957,6 +1013,7 @@ class TestCheckConstraintsMetrics:
         assert any("shell" in v.lower() for v in result.violations)
 
     def test_no_hardcoded_secrets_passes(self):
+        """Test that code without hardcoded secrets passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_hardcoded_secrets=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -964,6 +1021,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_hardcoded_secrets_fails(self):
+        """Test that code with hardcoded secrets fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_hardcoded_secrets=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -972,6 +1030,7 @@ class TestCheckConstraintsMetrics:
         assert any("secret" in v.lower() or "password" in v.lower() for v in result.violations)
 
     def test_no_requests_without_timeout_passes(self):
+        """Test that requests with timeout passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_requests_without_timeout=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -979,6 +1038,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_requests_without_timeout_fails(self):
+        """Test that requests without timeout fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_requests_without_timeout=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -989,6 +1049,7 @@ class TestCheckConstraintsMetrics:
     # --- Maintainability constraints ---
 
     def test_max_cognitive_complexity_passes(self):
+        """Test that low cognitive complexity passes the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cognitive_complexity=10), secondary=ConstraintSet(), target_files=[],
         )
@@ -997,6 +1058,7 @@ class TestCheckConstraintsMetrics:
         assert result.metrics["cognitive_complexity"] <= 3
 
     def test_max_cognitive_complexity_fails(self):
+        """Test that high cognitive complexity fails the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cognitive_complexity=3), secondary=ConstraintSet(), target_files=[],
         )
@@ -1005,6 +1067,7 @@ class TestCheckConstraintsMetrics:
         assert any("cognitive" in v.lower() for v in result.violations)
 
     def test_max_local_variables_passes(self):
+        """Test that few local variables pass the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_local_variables=3), secondary=ConstraintSet(), target_files=[],
         )
@@ -1013,6 +1076,7 @@ class TestCheckConstraintsMetrics:
         assert result.metrics["max_local_variables"] == 1
 
     def test_max_local_variables_fails(self):
+        """Test that many local variables fail the limit."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_local_variables=3), secondary=ConstraintSet(), target_files=[],
         )
@@ -1021,6 +1085,7 @@ class TestCheckConstraintsMetrics:
         assert result.metrics["max_local_variables"] == 6
 
     def test_no_debugger_statements_passes(self):
+        """Test that code without debugger statements passes the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_debugger_statements=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -1028,6 +1093,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_debugger_statements_fails(self):
+        """Test that code with debugger statements fails the check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_debugger_statements=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -1036,6 +1102,7 @@ class TestCheckConstraintsMetrics:
         assert any("debugger" in v.lower() for v in result.violations)
 
     def test_no_nested_imports_passes(self):
+        """Test that top-level imports pass the nested import check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_nested_imports=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -1043,6 +1110,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_no_nested_imports_fails(self):
+        """Test that imports inside functions fail the nested import check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(no_nested_imports=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -1051,6 +1119,7 @@ class TestCheckConstraintsMetrics:
         assert any("nested import" in v.lower() for v in result.violations)
 
     def test_require_type_annotations_passes(self):
+        """Test that annotated functions pass the type annotation check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(require_type_annotations=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -1058,6 +1127,7 @@ class TestCheckConstraintsMetrics:
         assert result.passed is True
 
     def test_require_type_annotations_fails(self):
+        """Test that unannotated functions fail the type annotation check."""
         constraints = TaskConstraints(
             primary=ConstraintSet(require_type_annotations=True), secondary=ConstraintSet(), target_files=[],
         )
@@ -1070,7 +1140,10 @@ class TestCheckConstraintsMetrics:
 
 
 class TestCheckConstraintsTwoGate:
+    """Tests for two-gate constraint evaluation."""
+
     def test_check_constraints_primary_passes(self):
+        """Test that primary constraints pass for simple code."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=10),
             secondary=ConstraintSet(),
@@ -1080,6 +1153,7 @@ class TestCheckConstraintsTwoGate:
         assert primary_result.passed is True
 
     def test_check_constraints_primary_fails(self):
+        """Test that primary constraints fail for complex code."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=2),
             secondary=ConstraintSet(),
@@ -1090,6 +1164,7 @@ class TestCheckConstraintsTwoGate:
         assert len(primary_result.violations) > 0
 
     def test_check_constraints_secondary_passes(self):
+        """Test that secondary constraints pass for documented code."""
         constraints = TaskConstraints(
             primary=ConstraintSet(),
             secondary=ConstraintSet(require_docstrings=True),
@@ -1099,6 +1174,7 @@ class TestCheckConstraintsTwoGate:
         assert secondary_result.passed is True
 
     def test_check_constraints_secondary_fails(self):
+        """Test that secondary constraints fail for undocumented code."""
         constraints = TaskConstraints(
             primary=ConstraintSet(),
             secondary=ConstraintSet(require_docstrings=True),
@@ -1108,6 +1184,7 @@ class TestCheckConstraintsTwoGate:
         assert secondary_result.passed is False
 
     def test_check_constraints_returns_both_results(self):
+        """Test that check_constraints returns both primary and secondary results."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=10),
             secondary=ConstraintSet(require_docstrings=True),
@@ -1121,6 +1198,7 @@ class TestCheckConstraintsTwoGate:
         assert isinstance(secondary_result, ConstraintResult)
 
     def test_check_constraints_skips_none_fields(self):
+        """Test that check_constraints skips None constraint fields."""
         constraints = TaskConstraints(
             primary=ConstraintSet(max_cyclomatic_complexity=10),
             secondary=ConstraintSet(),

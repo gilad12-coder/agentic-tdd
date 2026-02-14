@@ -1,39 +1,74 @@
 # agentic-tdd
 
-A 2.5-loop system that uses LLM agents to generate tests, critique them, and then implement code that passes those tests.
+**Agentic test-driven development. Write a spec, get tested code.**
 
-**Loop 1** — Generate pytest tests from a spec using an LLM agent.
-**Loop 1.5** — A red-team critic reviews the tests for exploitability, then actively attempts to write exploit code that passes the tests without implementing the spec.
-**Loop 2** — A separate implementing agent writes production code to pass the tests.
+---
 
-## Install
+**Documentation**: <a href="https://gilad12-coder.github.io/agentic-tdd" target="_blank">https://gilad12-coder.github.io/agentic-tdd</a>
+
+**Source Code**: <a href="https://github.com/gilad12-coder/agentic-tdd" target="_blank">https://github.com/gilad12-coder/agentic-tdd</a>
+
+---
+
+You describe what a function should do. LLM agents generate tests, try to break them, and then write the implementation — all under mechanical quality constraints you control.
+
+## Key Features
+
+- **Tested by default** — every function starts with a generated pytest suite, not an afterthought.
+- **Red-team critiqued** — a critic agent actively tries to cheat the tests. If it can pass them with hardcoded returns, you know they're weak.
+- **Docker sandbox** — implementation tests run in an isolated Docker container. Untrusted generated code never touches your host.
+- **34 static analysis constraints** — complexity limits, correctness checks, security rules, style enforcement. All via AST, no runtime needed.
+- **Human in the loop** — you review and approve tests before anything gets implemented. Or use `-y` to auto-accept everything.
+- **Session persistence** — interrupted? Re-run and pick up where you left off.
+- **Pluggable agents** — Claude for test generation, Codex for implementation, or swap them.
+
+## How It Works
+
+```
+Spec ──> Generate Tests ──> You Review ──> Critic Attacks ──> Plan ──> Implement (Docker)
+```
+
+**Loop 1** — An LLM generates pytest tests from your spec.
+
+**Loop 1.5** — A red-team critic attacks the tests. It writes a cheating implementation and runs it. If the cheat passes, the tests have gaps.
+
+**Plan** — A structured `plan.md` is auto-generated from the spec, constraints, and critique findings.
+
+**Loop 2** — A separate LLM writes production code that passes the hardened tests inside a Docker container, retrying with error feedback until all tests pass.
+
+## Requirements
+
+- Python 3.12+
+- <a href="https://github.com/anthropics/claude-code" target="_blank">Claude Code</a> (test generation + critique)
+- <a href="https://github.com/openai/codex" target="_blank">OpenAI Codex</a> (implementation)
+- <a href="https://docs.docker.com/get-docker/" target="_blank">Docker</a> (sandbox isolation for implementation tests — optional, falls back to host pytest)
+
+## Installation
 
 ```bash
 uv sync
 ```
 
-## Prerequisites
-
-The CLI agents must be installed and authenticated separately:
+Install and authenticate the CLI agents:
 
 ```bash
-# Claude Code (test generation + critique)
 npm install -g @anthropic-ai/claude-code
 claude /login
 
-# OpenAI Codex (implementation)
 npm install -g @openai/codex
 codex auth login
 ```
 
-## Usage
+## Example
 
-1. Write a [spec file](docs/spec-format.md):
+### Write a spec
 
 ```yaml
 name: add
 description: |
   Adds two integers and returns their sum.
+  - Works with negative numbers
+  - Works with zero
 signature: "add(a: int, b: int) -> int"
 examples:
   - input: "(1, 2)"
@@ -43,28 +78,31 @@ target_files:
   - "src/add.py"
 ```
 
-2. Run the orchestrator:
+### Run it
 
 ```bash
+# Interactive — review tests and critique manually
 atdd run spec.yaml
+
+# Auto-accept everything and implement in Docker
+atdd run spec.yaml -y --implement
+
+# Run implementation separately after a completed session
+atdd implement --spec spec.yaml
 ```
 
-3. Review generated tests, read the critique, and get your implementation.
-
-See [Workflow](docs/workflow.md) for the full process.
-
-## Documentation
-
-| Doc | Description |
-|-----|-------------|
-| [Workflow](docs/workflow.md) | The 2.5-loop system, review process, session management |
-| [Spec Format](docs/spec-format.md) | YAML spec file reference |
-| [Configuration](docs/configuration.md) | Environment variables, constraint profiles, CLI options |
-| [Constraints](docs/constraints.md) | All 34 available constraints with examples and quick-copy profiles |
-
-## Running Tests
+### Check status
 
 ```bash
-uv run pytest tests/ -v
+atdd status
 ```
 
+## Dependencies
+
+- <a href="https://docs.pydantic.dev/" target="_blank">Pydantic</a> — data models and validation
+- <a href="https://radon.readthedocs.io/" target="_blank">Radon</a> — cyclomatic complexity analysis
+- <a href="https://rich.readthedocs.io/" target="_blank">Rich</a> — terminal output
+
+## License
+
+MIT

@@ -12,4 +12,21 @@ profiles:
     secondary:
       require_docstrings: true
 
+  recommended:
+    primary:
+      max_cyclomatic_complexity: 10
+      max_cognitive_complexity: 15
+      max_lines_per_function: 50
+      max_parameters: 5
+      max_nested_depth: 4
+      no_bare_except: true
+      no_unreachable_code: true
+      no_mutable_defaults: true
+      no_eval: true
+      no_exec: true
+    secondary:
+      require_docstrings: true
+      no_print_statements: true
+      no_debugger_statements: true
+
 functions: {}
