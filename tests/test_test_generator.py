@@ -98,6 +98,23 @@ class TestBuildGenerationPrompt:
         prompt = build_generation_prompt(minimal_spec, constraints)
         assert "O(n)" in prompt
 
+    def test_build_generation_prompt_excludes_hidden_eval_literals(self, minimal_constraints):
+        """Test that hidden eval values are not shown in generation prompt.
+
+        Args:
+            minimal_constraints: Minimal TaskConstraints fixture.
+        """
+        spec = ParsedSpec(
+            name="add",
+            description="Add two numbers",
+            public_evals=[{"input": "(1, 2)", "output": "3"}],
+            hidden_evals=[{"input": "(100, 200)", "output": "300"}],
+        )
+        prompt = build_generation_prompt(spec, minimal_constraints)
+        assert "(1, 2)" in prompt
+        assert "100" not in prompt
+        assert "300" not in prompt
+
 
 class TestExtractPythonFromResponse:
     """Tests for extract_python_from_response."""

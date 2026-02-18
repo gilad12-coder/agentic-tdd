@@ -1,6 +1,7 @@
 """Docker subprocess wrapper for isolated pytest execution."""
 
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,28 +45,36 @@ def check_docker_available() -> bool:
 
 
 def build_docker_pytest_command(
-    workspace: Path, python_version: str = "3.12"
+    workspace: Path,
+    python_version: str = "3.12",
+    test_targets: list[str] | None = None,
 ) -> list[str]:
     """Construct the Docker CLI command to run pytest in a container.
 
     Args:
         workspace: Host directory to mount as ``/app`` inside the container.
         python_version: Python image tag version.
+        test_targets: Optional pytest targets relative to ``/app``.
 
     Returns:
         List of command arguments for ``subprocess.run``.
     """
+    targets = test_targets or ["tests/"]
+    pytest_targets = " ".join(shlex.quote(target) for target in targets)
     return [
         "docker", "run", "--rm",
         "-v", f"{workspace.resolve()}:/app",
         "-w", "/app",
         f"python:{python_version}-slim",
-        "sh", "-c", "pip install pytest -q && pytest tests/ -v",
+        "sh", "-c", f"pip install -q . && pip install -q pytest && pytest {pytest_targets} -v",
     ]
 
 
 def run_pytest_in_docker(
-    workspace: Path, timeout: int = 120, python_version: str = "3.12"
+    workspace: Path,
+    timeout: int = 120,
+    python_version: str = "3.12",
+    test_targets: list[str] | None = None,
 ) -> DockerTestResult:
     """Run pytest inside a Docker container and return the result.
 
@@ -73,11 +82,12 @@ def run_pytest_in_docker(
         workspace: Host directory containing tests and implementation.
         timeout: Maximum seconds before the container is killed.
         python_version: Python image tag version.
+        test_targets: Optional pytest targets relative to ``/app``.
 
     Returns:
         DockerTestResult with pass/fail status and captured output.
     """
-    cmd = build_docker_pytest_command(workspace, python_version)
+    cmd = build_docker_pytest_command(workspace, python_version, test_targets)
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,

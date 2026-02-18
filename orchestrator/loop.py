@@ -1,13 +1,18 @@
 """Main orchestration loop for test generation, review, and critique."""
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 from orchestrator.cli_runner import build_implementation_command, run_cli_agent
 from orchestrator.config import Config
 from orchestrator.constraint_checks import check_constraints
 from orchestrator.constraint_loader import load_profiles, resolve_constraints
-from orchestrator.critic import parse_critique, run_exploit_check
+from orchestrator.critic import (
+    parse_critique,
+    run_exploit_check,
+    verify_exploit_with_hidden_evals,
+)
 from orchestrator.prompts import (
     build_critic_prompt,
     build_generation_prompt,
@@ -61,6 +66,10 @@ def run_session(
     spec = parse_spec(spec_path)
     profiles = load_profiles(profiles_path)
     config = Config()
+    workspace = spec_path.parent
+
+    if not session_path.is_absolute():
+        session_path = workspace / session_path
 
     state = load_session(session_path)
     if state is None:
@@ -91,7 +100,9 @@ def run_session(
             for p in state.function_progress
         }
         success = run_implementation(
-            state, config, spec=spec,
+            state, config,
+            test_dir=workspace / "tests",
+            spec=spec,
             constraints_map=constraints_map, use_docker=use_docker,
         )
         display_implementation_result(success)
@@ -141,6 +152,11 @@ def process_function(
             function_spec,
             config,
         )
+        if exploit_passed and exploit_code and function_spec.hidden_evals:
+            if verify_exploit_with_hidden_evals(
+                exploit_code, function_spec.name, function_spec.hidden_evals
+            ):
+                exploit_passed = False
         critique.exploit_passed = exploit_passed
         critique.exploit_code = exploit_code
         if prompt_critique_review(critique, auto=auto_critique):
@@ -442,6 +458,7 @@ def run_implementation(
         plan_content = build_implementation_plan(state, spec, constraints_map)
         plan_path = write_plan_to_workspace(plan_content, test_dir.parent)
 
+    hidden_specs = _collect_hidden_eval_specs(state, spec)
     max_attempts = max(config.max_iterations, 1)
     error_feedback = ""
     for attempt in range(1, max_attempts + 1):
@@ -452,11 +469,29 @@ def run_implementation(
         command = build_implementation_command(
             prompt, config.implementation_agent, config.implementation_model,
         )
-        subprocess.run(command)
+        try:
+            impl_result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            error_feedback = _format_agent_failure_feedback(
+                returncode=-1,
+                stdout="",
+                stderr=f"Agent binary not found: {exc}",
+            )
+            continue
 
-        passed, error_feedback = _verify_tests(
-            test_dir, use_docker,
-        )
+        if impl_result.returncode != 0:
+            error_feedback = _format_agent_failure_feedback(
+                returncode=impl_result.returncode,
+                stdout=impl_result.stdout,
+                stderr=impl_result.stderr,
+            )
+            continue
+
+        passed, error_feedback = _verify_tests(test_dir, use_docker, hidden_specs)
         if passed:
             return True
 
@@ -464,30 +499,305 @@ def run_implementation(
 
 
 def _verify_tests(
-    test_dir: Path, use_docker: bool
+    test_dir: Path,
+    use_docker: bool,
+    hidden_specs: dict[str, ParsedSpec] | None = None,
 ) -> tuple[bool, str]:
-    """Run pytest and return pass/fail with captured output.
+    """Run public pytest checks, then optional hidden eval checks.
 
     Args:
         test_dir: Directory containing test files.
         use_docker: When True, run pytest inside a Docker container.
+        hidden_specs: Optional function-scoped specs with hidden evals.
 
     Returns:
         Tuple of (passed, error_output).
     """
+    public_passed, public_output = _run_pytest_targets(
+        workspace=test_dir.parent, targets=[test_dir], use_docker=use_docker
+    )
+    if not public_passed:
+        return False, public_output
+    if not hidden_specs:
+        return True, ""
+    hidden_passed, hidden_output = _run_hidden_eval_checks(
+        test_dir=test_dir, use_docker=use_docker, hidden_specs=hidden_specs
+    )
+    if hidden_passed:
+        return True, ""
+    if hidden_output.startswith("HIDDEN EVAL CONFIG ERROR:"):
+        return False, hidden_output
+    return False, _redacted_hidden_failure_feedback(hidden_output, hidden_specs)
+
+
+def _collect_hidden_eval_specs(
+    state: SessionState, spec: ParsedSpec | None
+) -> dict[str, ParsedSpec]:
+    """Collect per-function specs that include hidden evals.
+
+    Args:
+        state: Session state containing function progress entries.
+        spec: Parsed task specification, or None if unavailable.
+
+    Returns:
+        Mapping of function name to function-scoped ParsedSpec with hidden evals.
+    """
+    if spec is None:
+        return {}
+    hidden_specs = {}
+    for progress in state.function_progress:
+        if not progress.test_source:
+            continue
+        function_spec = _spec_for_function(spec, progress.name)
+        if function_spec.hidden_evals:
+            hidden_specs[progress.name] = function_spec
+    return hidden_specs
+
+
+def _run_pytest_targets(
+    workspace: Path, targets: list[Path], use_docker: bool
+) -> tuple[bool, str]:
+    """Run pytest for the provided targets via host or Docker.
+
+    Args:
+        workspace: Root workspace directory for Docker-relative paths.
+        targets: List of test file or directory paths to run.
+        use_docker: When True, run pytest inside a Docker container.
+
+    Returns:
+        Tuple of (passed, combined_output).
+    """
     if use_docker:
         from orchestrator.sandbox import run_pytest_in_docker
-        result = run_pytest_in_docker(test_dir.parent)
+
+        docker_targets = []
+        for target in targets:
+            if target.is_absolute():
+                try:
+                    docker_targets.append(str(target.relative_to(workspace)))
+                except ValueError:
+                    docker_targets.append(str(target))
+            else:
+                docker_targets.append(str(target))
+        result = run_pytest_in_docker(workspace, test_targets=docker_targets)
         return result.passed, result.stdout + result.stderr
+
     pytest_result = subprocess.run(
-        ["pytest", str(test_dir), "-v"],
+        ["pytest", *(str(target) for target in targets), "-v"],
         capture_output=True,
         text=True,
     )
+    return pytest_result.returncode == 0, pytest_result.stdout + pytest_result.stderr
+
+
+def _run_hidden_eval_checks(
+    test_dir: Path, use_docker: bool, hidden_specs: dict[str, ParsedSpec]
+) -> tuple[bool, str]:
+    """Run hidden eval assertions from ephemeral test files.
+
+    Args:
+        test_dir: Directory containing public test files.
+        use_docker: When True, run pytest inside a Docker container.
+        hidden_specs: Mapping of function name to spec with hidden evals.
+
+    Returns:
+        Tuple of (passed, combined_output).
+    """
+    workspace = test_dir.parent
+    with tempfile.TemporaryDirectory(
+        dir=workspace, prefix=".atdd_hidden_eval_"
+    ) as temp_dir:
+        hidden_dir = Path(temp_dir)
+        try:
+            hidden_paths = _write_hidden_eval_tests(hidden_dir, hidden_specs)
+        except ValueError as exc:
+            return False, str(exc)
+        if not hidden_paths:
+            return True, ""
+        return _run_pytest_targets(workspace, hidden_paths, use_docker)
+
+
+def _write_hidden_eval_tests(
+    hidden_dir: Path, hidden_specs: dict[str, ParsedSpec]
+) -> list[Path]:
+    """Write hidden eval tests to temporary files and return file paths.
+
+    Args:
+        hidden_dir: Temporary directory to write hidden test files into.
+        hidden_specs: Mapping of function name to spec with hidden evals.
+
+    Returns:
+        List of paths to written hidden test files.
+    """
+    written_paths = []
+    for func_name, function_spec in hidden_specs.items():
+        test_path = hidden_dir / f"test_hidden_{func_name}.py"
+        test_path.write_text(
+            _build_hidden_eval_test_source(function_spec),
+            encoding="utf-8",
+        )
+        written_paths.append(test_path)
+    return written_paths
+
+
+def _build_hidden_eval_test_source(spec: ParsedSpec) -> str:
+    """Build hidden pytest source for one function spec.
+
+    Args:
+        spec: Function-scoped ParsedSpec containing hidden evals.
+
+    Returns:
+        Python source code string for hidden eval test cases.
+    """
+    module_candidates = _module_candidates_from_targets(spec.target_files)
+    if not module_candidates:
+        raise ValueError(
+            "HIDDEN EVAL CONFIG ERROR: Could not derive import module candidates "
+            f"for function '{spec.name}' from target_files={spec.target_files!r}. "
+            "Provide Python source file paths in target_files."
+        )
+    lines = [
+        "import importlib",
+        "",
+        f"FUNCTION_NAME = {spec.name!r}",
+        f"MODULE_CANDIDATES = {module_candidates!r}",
+        "",
+        "def _load_target():",
+        "    for module_name in MODULE_CANDIDATES:",
+        "        try:",
+        "            module = importlib.import_module(module_name)",
+        "        except Exception:",
+        "            continue",
+        "        if hasattr(module, FUNCTION_NAME):",
+        "            return getattr(module, FUNCTION_NAME)",
+        "    raise AssertionError('Could not import target function for hidden evals')",
+        "",
+        "TARGET_FUNC = _load_target()",
+        "",
+    ]
+    for idx, case in enumerate(spec.hidden_evals):
+        lines.append(f"def test_hidden_case_{idx}():")
+        lines.append(f"    assert TARGET_FUNC{case['input']} == {case['output']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _module_candidates_from_targets(target_files: list[str]) -> list[str]:
+    """Build import-module candidates from configured target file paths.
+
+    Args:
+        target_files: List of target file path strings from the spec.
+
+    Returns:
+        List of Python module name candidates for dynamic import.
+    """
+    candidates: list[str] = []
+    for raw_path in target_files:
+        path = Path(raw_path)
+        if path.suffix != ".py":
+            continue
+        parts = list(path.with_suffix("").parts)
+        if parts and parts[-1] == "__init__":
+            parts = parts[:-1]
+        if not parts:
+            continue
+        _append_unique(candidates, ".".join(parts))
+        _append_unique(candidates, parts[-1])
+        if len(parts) > 1 and parts[0] in {"src", "app", "lib"}:
+            _append_unique(candidates, ".".join(parts[1:]))
+    return candidates
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    """Append value if it does not already exist.
+
+    Args:
+        items: Target list to append to.
+        value: String value to append if not already present.
+    """
+    if value and value not in items:
+        items.append(value)
+
+
+def _redacted_hidden_failure_feedback(
+    hidden_output: str, hidden_specs: dict[str, ParsedSpec]
+) -> str:
+    """Return non-sensitive feedback text for hidden eval failures.
+
+    Args:
+        hidden_output: Raw pytest output from hidden eval runs.
+        hidden_specs: Mapping of function name to spec with hidden evals.
+
+    Returns:
+        Redacted feedback string safe to show to the implementation agent.
+    """
+    failed_cases = _count_failed_cases(hidden_output)
+    function_count = len(hidden_specs)
     return (
-        pytest_result.returncode == 0,
-        pytest_result.stdout + pytest_result.stderr,
+        f"Hidden evaluations failed ({failed_cases} case(s) across "
+        f"{function_count} function(s)). Hidden details are redacted. "
+        "Generalize your implementation and handle broader inputs."
     )
+
+
+def _format_agent_failure_feedback(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    max_chars: int = 1200,
+) -> str:
+    """Format bounded feedback for implementation-agent command failures.
+
+    Args:
+        returncode: Process exit code from the implementation agent.
+        stdout: Agent process stdout.
+        stderr: Agent process stderr.
+        max_chars: Maximum characters to include for each stream.
+
+    Returns:
+        Retry feedback string including bounded process output.
+    """
+    parts = [f"IMPLEMENTATION AGENT FAILED (exit code {returncode})."]
+    stderr_excerpt = _bounded_excerpt(stderr, max_chars)
+    stdout_excerpt = _bounded_excerpt(stdout, max_chars)
+    if stderr_excerpt:
+        parts.append(f"stderr:\n{stderr_excerpt}")
+    if stdout_excerpt:
+        parts.append(f"stdout:\n{stdout_excerpt}")
+    parts.append("Fix the failure and retry implementation.")
+    return "\n\n".join(parts)
+
+
+def _bounded_excerpt(text: str, limit: int) -> str:
+    """Trim and bound text size for retry feedback.
+
+    Args:
+        text: Raw process output text.
+        limit: Max number of characters to keep.
+
+    Returns:
+        Bounded excerpt, preserving the end marker when truncated.
+    """
+    cleaned = text.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit] + "\n...[truncated]..."
+
+
+def _count_failed_cases(pytest_output: str) -> int:
+    """Count failing pytest cases from output without exposing payloads.
+
+    Args:
+        pytest_output: Raw pytest stdout/stderr output.
+
+    Returns:
+        Number of failed test cases, minimum 1.
+    """
+    count = 0
+    for line in pytest_output.splitlines():
+        if line.startswith("FAILED "):
+            count += 1
+    return count if count > 0 else 1
 
 
 def _spec_for_function(spec: ParsedSpec, func_name: str) -> ParsedSpec:
@@ -502,10 +812,14 @@ def _spec_for_function(spec: ParsedSpec, func_name: str) -> ParsedSpec:
     """
     for function_spec in spec.functions:
         if function_spec.name == func_name:
+            public_evals = function_spec.public_evals or spec.public_evals
+            hidden_evals = function_spec.hidden_evals or spec.hidden_evals
             return ParsedSpec(
                 name=function_spec.name,
                 description=function_spec.description or spec.description,
-                examples=function_spec.examples or spec.examples,
+                examples=list(public_evals),
+                public_evals=list(public_evals),
+                hidden_evals=list(hidden_evals),
                 signature=function_spec.signature or spec.signature,
                 constraint_profile=function_spec.constraint_profile
                 or spec.constraint_profile,
@@ -515,7 +829,9 @@ def _spec_for_function(spec: ParsedSpec, func_name: str) -> ParsedSpec:
     return ParsedSpec(
         name=func_name,
         description=spec.description,
-        examples=spec.examples,
+        examples=list(spec.public_evals),
+        public_evals=list(spec.public_evals),
+        hidden_evals=list(spec.hidden_evals),
         signature=spec.signature,
         constraint_profile=spec.constraint_profile,
         target_files=list(spec.target_files),
@@ -560,4 +876,3 @@ def _write_generated_tests(state: SessionState, test_dir: Path) -> list[Path]:
         path.write_text(progress.test_source)
         written_paths.append(path)
     return written_paths
-

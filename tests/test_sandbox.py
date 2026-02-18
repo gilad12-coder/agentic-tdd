@@ -121,8 +121,18 @@ class TestBuildDockerPytestCommand:
         """
         cmd = build_docker_pytest_command(tmp_path)
         shell_cmd = cmd[-1]
-        assert "pip install pytest" in shell_cmd
+        assert "pip install -q ." in shell_cmd
+        assert "pip install -q pytest" in shell_cmd
         assert "pytest tests/ -v" in shell_cmd
+
+    def test_supports_custom_test_targets(self, tmp_path):
+        """Test that custom pytest targets are added to the docker command."""
+        cmd = build_docker_pytest_command(
+            tmp_path, test_targets=["tests/", ".atdd_hidden_eval_123"]
+        )
+        shell_cmd = cmd[-1]
+        assert "pip install -q ." in shell_cmd
+        assert "pytest tests/ .atdd_hidden_eval_123 -v" in shell_cmd
 
 
 # --- run_pytest_in_docker ---
@@ -170,6 +180,16 @@ class TestRunPytestInDocker:
         assert result.passed is False
         assert result.exit_code == 1
         assert len(result.failing_tests) == 1
+
+    @patch("orchestrator.sandbox.subprocess.run")
+    def test_forwards_custom_targets(self, mock_run, tmp_path):
+        """Test that run_pytest_in_docker forwards custom targets."""
+        mock_run.return_value = type(
+            "Result", (), {"returncode": 0, "stdout": "1 passed", "stderr": ""}
+        )()
+        run_pytest_in_docker(tmp_path, test_targets=["tests/", ".hidden_tests"])
+        cmd = mock_run.call_args[0][0]
+        assert "pytest tests/ .hidden_tests -v" in cmd[-1]
 
     @patch(
         "orchestrator.sandbox.subprocess.run",

@@ -121,6 +121,10 @@ def run_implement(
     from orchestrator.constraint_loader import load_profiles, resolve_constraints
     from orchestrator.spec_intake import parse_spec
 
+    workspace = spec_path.parent
+    if not session_path.is_absolute():
+        session_path = workspace / session_path
+
     state = load_session(session_path)
     if state is None:
         display_error(f"No session found at {session_path}")
@@ -148,6 +152,7 @@ def run_implement(
     }
     success = run_implementation(
         state, config,
+        test_dir=workspace / "tests",
         spec=spec, constraints_map=constraints_map, use_docker=use_docker,
     )
     display_implementation_result(success)

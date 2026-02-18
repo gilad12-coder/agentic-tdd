@@ -69,6 +69,8 @@ Each function can override the top-level `constraint_profile`. Functions without
 | `description` | yes | What the code should do. Supports multi-line. |
 | `signature` | no | Python function signature string |
 | `examples` | no | List of input/output pairs |
+| `public_evals` | no | Explicit public eval cases (defaults to `examples` if omitted) |
+| `hidden_evals` | no | Secret eval cases the implementation must pass but never sees |
 | `constraint_profile` | no | Profile name from profiles.yaml (default: `"default"`) |
 | `target_files` | no | List of file paths where code should be written |
 | `functions` | no | List of function specs for multi-function tasks |
@@ -81,6 +83,8 @@ Each function can override the top-level `constraint_profile`. Functions without
 | `description` | no | What this specific function does |
 | `signature` | no | Python function signature |
 | `examples` | no | Input/output examples for this function |
+| `public_evals` | no | Explicit public eval cases for this function |
+| `hidden_evals` | no | Secret eval cases for this function |
 | `constraint_profile` | no | Override the top-level profile for this function |
 
 ---
@@ -104,6 +108,40 @@ examples:
 
 !!! tip
     Concrete input/output examples produce better tests than freeform descriptions. Use `raw` only when the behavior is hard to express as a single return value.
+
+---
+
+## Public and hidden evals
+
+Evals are input/output pairs used to verify the implementation. They come in two flavors:
+
+**Public evals** are visible to the test generator and included in its prompt. By default, `examples` are used as public evals. If you provide an explicit `public_evals` field, it takes precedence:
+
+```yaml
+examples:
+  - input: "(1, 2)"
+    output: "3"
+public_evals:
+  - input: "(1, 2)"
+    output: "3"
+  - input: "(0, 0)"
+    output: "0"
+```
+
+**Hidden evals** are secret test cases that the implementation must pass but the agent never sees. They prevent hardcoded implementations and verify genuine correctness:
+
+```yaml
+hidden_evals:
+  - input: "(100, 200)"
+    output: "300"
+  - input: "(-5, -3)"
+    output: "-8"
+```
+
+Hidden evals run in a second verification phase after the public tests pass. Failure feedback is redacted — the implementation agent learns that hidden cases failed but never sees the actual inputs or outputs.
+
+!!! tip
+    Use hidden evals for edge cases you want to guarantee without revealing them to the agent. This makes it impossible to pass by hardcoding return values.
 
 ---
 

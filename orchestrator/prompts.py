@@ -22,7 +22,7 @@ def build_generation_prompt(
     Returns:
         Prompt string for test generation.
     """
-    examples_str = _format_examples(spec)
+    examples_str = _format_public_evals(spec)
     primary_str = _format_primary_constraints(constraints)
     secondary_str = _format_secondary_constraints(constraints)
     guidance_str = _format_guidance(constraints)
@@ -31,7 +31,7 @@ def build_generation_prompt(
         f"Write pytest tests for the function `{spec.name}`.\n\n"
         f"Description: {spec.description}\n\n"
         f"Signature: {spec.signature or 'not specified'}\n\n"
-        f"Examples:\n{examples_str}\n"
+        f"Public evals:\n{examples_str}\n"
         f"Primary constraints:\n{primary_str}\n\n"
         f"Secondary constraints:\n{secondary_str}\n\n"
         f"Guidance:\n{guidance_str}\n\n"
@@ -73,14 +73,14 @@ def build_critic_prompt(
         Prompt string for critique.
     """
     constraints_section = _format_constraints_section(constraints)
-    examples_str = _format_examples(spec)
+    examples_str = _format_public_evals(spec)
     return (
         f"You are a red-team critic. Review the following test code for the "
         f"function `{spec.name}` and find ways to exploit or game it.\n\n"
         f"Test code:\n```python\n{test_source}\n```\n\n"
         f"Specification: {spec.description}\n\n"
         f"Signature: {spec.signature or 'not specified'}\n\n"
-        f"Examples:\n{examples_str}\n\n"
+        f"Public evals:\n{examples_str}\n\n"
         f"{constraints_section}"
         f"Identify ways an implementation could cheat or exploit these tests "
         f"by passing them without truly implementing the specification.\n\n"
@@ -100,22 +100,27 @@ def build_exploit_prompt(test_source: str, spec: ParsedSpec) -> str:
 
     Args:
         test_source: Generated test suite source code.
-        spec: ParsedSpec with function details and examples.
+        spec: ParsedSpec with function details and public evals.
 
     Returns:
         Prompt instructing the model to write exploit code only.
     """
-    examples_str = _format_examples(spec)
+    examples_str = _format_public_evals(spec)
     return (
         f"You are an adversarial engineer trying to cheat tests.\n\n"
-        f"Write the weakest possible implementation for `{spec.name}` that "
-        f"passes the tests below while violating the true intent of the spec "
-        f"when possible.\n\n"
+        f"Your goal: pass all the tests below WITHOUT implementing the real "
+        f"algorithm. Use ONLY cheating strategies:\n"
+        f"- Hardcoded return values for specific inputs\n"
+        f"- Lookup tables mapping known inputs to outputs\n"
+        f"- Input fingerprinting (check string/length/sum of args)\n"
+        f"- Pattern matching on test-specific values\n\n"
+        f"Do NOT write a correct general-purpose algorithm. If you cannot "
+        f"find a way to cheat, return ONLY the word IMPOSSIBLE.\n\n"
         f"Function spec:\n"
         f"- Name: {spec.name}\n"
         f"- Description: {spec.description}\n"
         f"- Signature: {spec.signature or 'not specified'}\n"
-        f"- Examples:\n{examples_str}\n\n"
+        f"- Public evals:\n{examples_str}\n\n"
         f"Tests to exploit:\n```python\n{test_source}\n```\n\n"
         f"Return only Python code for the implementation. Do not include "
         f"Markdown fences or explanations."
@@ -154,6 +159,10 @@ def build_implementation_prompt(
         "Write your implementation to the target files specified in the plan. "
         "Run pytest to verify your implementation passes all tests before finishing."
     )
+    parts.append(
+        "Additional hidden evaluations may run after public tests pass. "
+        "Implement the true behavior, not hardcoded case matching."
+    )
     if error_feedback:
         parts.append(
             f"\nPREVIOUS ATTEMPT FAILED. Fix the errors below:\n{error_feedback}"
@@ -164,17 +173,17 @@ def build_implementation_prompt(
 # --- Private formatting helpers ---
 
 
-def _format_examples(spec: ParsedSpec) -> str:
-    """Format spec examples into a prompt section.
+def _format_public_evals(spec: ParsedSpec) -> str:
+    """Format spec public evals into a prompt section.
 
     Args:
-        spec: ParsedSpec containing example input/output pairs.
+        spec: ParsedSpec containing canonical public eval pairs.
 
     Returns:
-        Formatted examples string.
+        Formatted public evals string.
     """
     parts = []
-    for ex in spec.examples:
+    for ex in spec.public_evals:
         if "input" in ex:
             parts.append(f"  - {spec.name}({ex['input']}) -> {ex.get('output', '?')}")
         elif "raw" in ex:

@@ -148,7 +148,53 @@ class TestFunctionSpec:
         assert fs.description == ""
         assert fs.signature is None
         assert fs.examples == []
+        assert fs.public_evals == []
+        assert fs.hidden_evals == []
         assert fs.constraint_profile is None
+
+    def test_function_spec_examples_aliases_to_public_evals(self):
+        """Test that examples are normalized into public_evals."""
+        fs = FunctionSpec(
+            name="logout",
+            examples=[{"input": '("abc")', "output": "True"}],
+        )
+        assert fs.public_evals == [{"input": '("abc")', "output": "True"}]
+        assert fs.examples == fs.public_evals
+
+    def test_function_spec_public_evals_override_examples(self):
+        """Test that explicit public_evals wins over examples."""
+        fs = FunctionSpec(
+            name="logout",
+            examples=[{"input": '("abc")', "output": "False"}],
+            public_evals=[{"input": '("abc")', "output": "True"}],
+        )
+        assert fs.public_evals == [{"input": '("abc")', "output": "True"}]
+        assert fs.examples == fs.public_evals
+
+    def test_function_spec_hidden_evals_schema_validation(self):
+        """Test that hidden_evals enforce input/output and ban raw."""
+        with pytest.raises(ValidationError):
+            FunctionSpec(name="logout", hidden_evals=[{"input": "(1)"}])
+        with pytest.raises(ValidationError):
+            FunctionSpec(name="logout", hidden_evals=[{"raw": "foo"}])
+        with pytest.raises(ValidationError):
+            FunctionSpec(name="logout", hidden_evals=[{"input": 1, "output": "2"}])
+
+    def test_function_spec_hidden_input_expression_validation(self):
+        """Test that malformed hidden input expressions are rejected."""
+        with pytest.raises(ValidationError):
+            FunctionSpec(
+                name="logout",
+                hidden_evals=[{"input": "(1, 2", "output": "3"}],
+            )
+
+    def test_function_spec_hidden_output_expression_validation(self):
+        """Test that malformed hidden output expressions are rejected."""
+        with pytest.raises(ValidationError):
+            FunctionSpec(
+                name="logout",
+                hidden_evals=[{"input": "(1, 2)", "output": "3 +"}],
+            )
 
 
 class TestParsedSpec:
@@ -164,6 +210,7 @@ class TestParsedSpec:
         assert spec.name == "is_palindrome"
         assert spec.description == "Check if string is palindrome"
         assert len(spec.examples) == 1
+        assert spec.public_evals == spec.examples
 
     def test_parsed_spec_required_fields_missing(self):
         """Test that ParsedSpec raises when required fields are missing."""
@@ -230,6 +277,26 @@ class TestParsedSpec:
             examples=[],
         )
         assert spec.functions == []
+
+    def test_parsed_spec_public_evals_override_examples(self):
+        """Test that top-level public_evals takes precedence over examples."""
+        spec = ParsedSpec(
+            name="add",
+            description="Add two numbers",
+            examples=[{"input": "(1, 1)", "output": "2"}],
+            public_evals=[{"input": "(2, 2)", "output": "4"}],
+        )
+        assert spec.public_evals == [{"input": "(2, 2)", "output": "4"}]
+        assert spec.examples == spec.public_evals
+
+    def test_parsed_spec_hidden_eval_validation(self):
+        """Test that ParsedSpec hidden evals require string input/output."""
+        with pytest.raises(ValidationError):
+            ParsedSpec(
+                name="add",
+                description="Add two numbers",
+                hidden_evals=[{"input": "(1, 2)", "output": 3}],
+            )
 
 
 # --- TestCritique ---

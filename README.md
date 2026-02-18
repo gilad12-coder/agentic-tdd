@@ -20,6 +20,7 @@ You describe what a function should do. LLM agents generate tests, try to break 
 - **34 static analysis constraints** — complexity limits, correctness checks, security rules, style enforcement. All via AST, no runtime needed.
 - **Human in the loop** — you review and approve tests before anything gets implemented. Or use `-y` to auto-accept everything.
 - **Session persistence** — interrupted? Re-run and pick up where you left off.
+- **Public + hidden eval split** — generation sees only public evals, while final verification can enforce hidden evals.
 - **Pluggable agents** — Claude for test generation, Codex for implementation, or swap them.
 
 ## How It Works
@@ -70,9 +71,12 @@ description: |
   - Works with negative numbers
   - Works with zero
 signature: "add(a: int, b: int) -> int"
-examples:
+public_evals:
   - input: "(1, 2)"
     output: "3"
+hidden_evals:
+  - input: "(100, 23)"
+    output: "123"
 constraint_profile: default
 target_files:
   - "src/add.py"

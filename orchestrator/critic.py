@@ -67,6 +67,33 @@ def run_exploit_check(test_source: str, spec, config: Config) -> tuple[bool, str
     return passed, exploit_code
 
 
+def verify_exploit_with_hidden_evals(
+    exploit_code: str, func_name: str, hidden_evals: list[dict]
+) -> bool:
+    """Check whether exploit code also passes hidden eval cases.
+
+    If the exploit passes hidden evals, it is likely a correct implementation
+    rather than a cheat (hardcoded returns, lookup tables, etc.).
+
+    Args:
+        exploit_code: Generated exploit implementation source.
+        func_name: Name of the function under test.
+        hidden_evals: Secret eval cases with 'input' and 'output' keys.
+
+    Returns:
+        True when the exploit passes all hidden evals (likely correct).
+    """
+    if not hidden_evals or not exploit_code:
+        return False
+    lines: list[str] = []
+    for idx, case in enumerate(hidden_evals):
+        lines.append(f"def test_hidden_{idx}():")
+        lines.append(f"    assert {func_name}{case['input']} == {case['output']}")
+        lines.append("")
+    test_source = "\n".join(lines)
+    return _run_exploit_pytest(test_source, exploit_code)
+
+
 _STDLIB_AND_TEST = frozenset({
     "pytest", "unittest", "collections", "typing", "dataclasses",
     "functools", "itertools", "math", "os", "sys", "re", "json",

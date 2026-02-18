@@ -1,8 +1,65 @@
 """Pydantic v2 models for the orchestrator system."""
 
+import ast
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+def _resolve_public_evals(
+    examples: list[dict], public_evals: list[dict], fields_set: set[str]
+) -> list[dict]:
+    """Resolve canonical public evals with explicit precedence rules.
+
+    Args:
+        examples: Raw examples from the spec.
+        public_evals: Explicit public evals from the spec.
+        fields_set: Set of field names explicitly provided by the user.
+
+    Returns:
+        Resolved list of public eval dicts.
+    """
+    if "public_evals" in fields_set:
+        return list(public_evals)
+    if public_evals:
+        return list(public_evals)
+    return list(examples)
+
+
+def _validate_hidden_evals(hidden_evals: list[dict], owner: str) -> None:
+    """Validate hidden evals have ``input`` and ``output`` and no ``raw``.
+
+    Args:
+        hidden_evals: List of hidden eval dicts to validate.
+        owner: Name of the owning model for error messages.
+    """
+    for idx, item in enumerate(hidden_evals):
+        if not isinstance(item, dict):
+            raise ValueError(f"{owner}.hidden_evals[{idx}] must be a mapping")
+        if "raw" in item:
+            raise ValueError(
+                f"{owner}.hidden_evals[{idx}] does not support 'raw'; use input/output"
+            )
+        if "input" not in item or "output" not in item:
+            raise ValueError(
+                f"{owner}.hidden_evals[{idx}] must contain both 'input' and 'output'"
+            )
+        if not isinstance(item["input"], str) or not isinstance(item["output"], str):
+            raise ValueError(
+                f"{owner}.hidden_evals[{idx}] values must be strings"
+            )
+        try:
+            ast.parse(item["input"], mode="eval")
+        except SyntaxError as exc:
+            raise ValueError(
+                f"{owner}.hidden_evals[{idx}].input is not a valid expression: {exc.msg}"
+            ) from exc
+        try:
+            ast.parse(item["output"], mode="eval")
+        except SyntaxError as exc:
+            raise ValueError(
+                f"{owner}.hidden_evals[{idx}].output is not a valid expression: {exc.msg}"
+            ) from exc
 
 
 class ConstraintSet(BaseModel):
@@ -72,7 +129,23 @@ class FunctionSpec(BaseModel):
     description: str = ""
     signature: str | None = None
     examples: list[dict] = Field(default_factory=list)
+    public_evals: list[dict] = Field(default_factory=list)
+    hidden_evals: list[dict] = Field(default_factory=list)
     constraint_profile: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_eval_fields(self) -> "FunctionSpec":
+        """Apply eval alias/precedence rules and validate hidden eval schema.
+
+        Returns:
+            The validated FunctionSpec instance with normalized evals.
+        """
+        self.public_evals = _resolve_public_evals(
+            self.examples, self.public_evals, self.model_fields_set
+        )
+        self.examples = list(self.public_evals)
+        _validate_hidden_evals(self.hidden_evals, "FunctionSpec")
+        return self
 
 
 class ParsedSpec(BaseModel):
@@ -81,10 +154,26 @@ class ParsedSpec(BaseModel):
     name: str
     description: str
     examples: list[dict] = Field(default_factory=list)
+    public_evals: list[dict] = Field(default_factory=list)
+    hidden_evals: list[dict] = Field(default_factory=list)
     signature: str | None = None
     constraint_profile: str = "default"
     target_files: list[str] = Field(default_factory=list)
     functions: list[FunctionSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def normalize_eval_fields(self) -> "ParsedSpec":
+        """Apply eval alias/precedence rules and validate hidden eval schema.
+
+        Returns:
+            The validated ParsedSpec instance with normalized evals.
+        """
+        self.public_evals = _resolve_public_evals(
+            self.examples, self.public_evals, self.model_fields_set
+        )
+        self.examples = list(self.public_evals)
+        _validate_hidden_evals(self.hidden_evals, "ParsedSpec")
+        return self
 
 
 class TestCritique(BaseModel):

@@ -18,7 +18,7 @@ def build_implementation_plan(
     """Build a structured markdown implementation plan.
 
     Iterates over completed functions in the session and formats their
-    signatures, descriptions, examples, constraints, and critique findings
+    signatures, descriptions, public evals, constraints, and critique findings
     into a plan document for the implementation agent.
 
     Args:
@@ -62,10 +62,10 @@ def build_implementation_plan(
         description = (func_spec.description if func_spec else "") or spec.description
         sections.append(f"**Description:** {description}\n")
 
-        examples = (func_spec.examples if func_spec else []) or spec.examples
-        if examples:
-            sections.append("**Examples:**")
-            for ex in examples:
+        public_evals = (func_spec.public_evals if func_spec else []) or spec.public_evals
+        if public_evals:
+            sections.append("**Public evals:**")
+            for ex in public_evals:
                 if "input" in ex:
                     sections.append(
                         f"- `{progress.name}({ex['input']})` -> `{ex.get('output', '?')}`"
@@ -120,14 +120,18 @@ def _append_constraints(
     """
     for label, cset in [("primary", constraints.primary),
                         ("secondary", constraints.secondary)]:
-        for field_name, value in cset.model_dump(exclude_none=True).items():
+        constraint_items = cset.model_dump(exclude_none=True)
+        if not constraint_items:
+            continue
+        sections.append(f"- {label} constraints:")
+        for field_name, value in constraint_items.items():
             readable = field_name.replace("_", " ")
             if isinstance(value, bool):
-                sections.append(f"- {readable}: {'yes' if value else 'no'}")
+                sections.append(f"  - {readable}: {'yes' if value else 'no'}")
             elif isinstance(value, list):
-                sections.append(f"- {readable}: {', '.join(str(v) for v in value)}")
+                sections.append(f"  - {readable}: {', '.join(str(v) for v in value)}")
             else:
-                sections.append(f"- {readable}: {value}")
+                sections.append(f"  - {readable}: {value}")
     if constraints.guidance:
         for item in constraints.guidance:
             sections.append(f"- {item}")

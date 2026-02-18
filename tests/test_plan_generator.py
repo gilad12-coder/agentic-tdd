@@ -31,13 +31,15 @@ def _make_spec():
                 name="add",
                 description="Add two numbers",
                 signature="add(a: int, b: int) -> int",
-                examples=[{"input": "(1, 2)", "output": "3"}],
+                public_evals=[{"input": "(1, 2)", "output": "3"}],
+                hidden_evals=[{"input": "(101, 202)", "output": "303"}],
             ),
             FunctionSpec(
                 name="subtract",
                 description="Subtract two numbers",
                 signature="subtract(a: int, b: int) -> int",
-                examples=[{"input": "(5, 3)", "output": "2"}],
+                public_evals=[{"input": "(5, 3)", "output": "2"}],
+                hidden_evals=[{"input": "(200, 50)", "output": "150"}],
             ),
         ],
     )
@@ -137,14 +139,26 @@ class TestBuildImplementationPlan:
         plan = build_implementation_plan(
             _make_state(), _make_spec(), _make_constraints_map()
         )
+        assert "Public evals" in plan
         assert "(1, 2)" in plan
         assert "(5, 3)" in plan
+
+    def test_does_not_include_hidden_eval_literals(self):
+        """Test that hidden eval case values are excluded from the plan."""
+        plan = build_implementation_plan(
+            _make_state(), _make_spec(), _make_constraints_map()
+        )
+        assert "101" not in plan
+        assert "202" not in plan
+        assert "303" not in plan
 
     def test_contains_constraints(self):
         """Test that the plan contains constraint information."""
         plan = build_implementation_plan(
             _make_state(), _make_spec(), _make_constraints_map()
         )
+        assert "primary constraints" in plan.lower()
+        assert "secondary constraints" in plan.lower()
         assert "cyclomatic complexity" in plan.lower()
         assert "docstrings" in plan.lower()
 

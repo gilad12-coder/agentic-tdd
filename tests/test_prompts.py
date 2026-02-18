@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from orchestrator.models import ParsedSpec
 from orchestrator.prompts import (
     build_critic_prompt,
     build_exploit_prompt,
@@ -71,6 +72,23 @@ class TestBuildGenerationPrompt:
         assert "hardcoded return 3" in prompt
         assert "CRITIC" in prompt
 
+    def test_hidden_evals_not_included(self, minimal_constraints):
+        """Test that hidden eval literals are not leaked to generation prompt.
+
+        Args:
+            minimal_constraints: Minimal TaskConstraints fixture.
+        """
+        spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            public_evals=[{"input": "(1, 2)", "output": "3"}],
+            hidden_evals=[{"input": "(999, 1)", "output": "1000"}],
+        )
+        prompt = build_generation_prompt(spec, minimal_constraints)
+        assert "(1, 2)" in prompt
+        assert "999" not in prompt
+        assert "1000" not in prompt
+
 
 class TestBuildCriticPrompt:
     """Tests for build_critic_prompt."""
@@ -127,6 +145,23 @@ class TestBuildCriticPrompt:
         prompt = build_critic_prompt("test code", minimal_spec, constraints=None)
         assert "red-team" in prompt.lower() or "critic" in prompt.lower()
 
+    def test_hidden_evals_not_included(self, minimal_constraints):
+        """Test that hidden eval literals are not leaked to critic prompt.
+
+        Args:
+            minimal_constraints: Minimal TaskConstraints fixture.
+        """
+        spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            public_evals=[{"input": "(1, 2)", "output": "3"}],
+            hidden_evals=[{"input": "(555, 7)", "output": "562"}],
+        )
+        prompt = build_critic_prompt("def test_add(): pass", spec, minimal_constraints)
+        assert "(1, 2)" in prompt
+        assert "555" not in prompt
+        assert "562" not in prompt
+
 
 class TestBuildExploitPrompt:
     """Tests for build_exploit_prompt."""
@@ -153,6 +188,19 @@ class TestBuildExploitPrompt:
         prompt = build_exploit_prompt(test_code, minimal_spec)
         assert "test_add" in prompt
         assert "assert add(1, 2) == 3" in prompt
+
+    def test_hidden_evals_not_included(self):
+        """Test that hidden eval literals are not leaked to exploit prompt."""
+        spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            public_evals=[{"input": "(1, 2)", "output": "3"}],
+            hidden_evals=[{"input": "(321, 123)", "output": "444"}],
+        )
+        prompt = build_exploit_prompt("def test_add(): pass", spec)
+        assert "(1, 2)" in prompt
+        assert "321" not in prompt
+        assert "444" not in prompt
 
 
 class TestBuildImplementationPrompt:
@@ -191,3 +239,9 @@ class TestBuildImplementationPrompt:
         prompt = build_implementation_prompt(paths)
         assert "Implement production code" in prompt
         assert "test_add.py" in prompt
+
+    def test_mentions_hidden_evaluations(self):
+        """Test that prompt warns about hidden eval checks."""
+        paths = [Path("tests/test_add.py")]
+        prompt = build_implementation_prompt(paths)
+        assert "hidden evaluations" in prompt.lower()

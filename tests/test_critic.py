@@ -4,7 +4,12 @@ from unittest.mock import patch
 import pytest
 
 from orchestrator.config import Config
-from orchestrator.critic import build_critic_prompt, parse_critique, run_exploit_check
+from orchestrator.critic import (
+    _strip_local_imports,
+    build_critic_prompt,
+    parse_critique,
+    run_exploit_check,
+)
 from orchestrator.models import CLIResult, ConstraintSet, TaskConstraints, TestCritique
 
 
@@ -220,3 +225,53 @@ class TestRunExploitCheck:
         )
         assert passed is False
         assert code == ""
+
+
+class TestStripLocalImports:
+    """Tests for _strip_local_imports."""
+
+    def test_strips_local_module_import(self):
+        """Test that a from-import of a local module is stripped."""
+        source = "from merge_intervals import merge_intervals\n"
+        result = _strip_local_imports(source)
+        assert "merge_intervals" not in result
+
+    def test_keeps_pytest_import(self):
+        """Test that a from-import of pytest is kept."""
+        source = "from pytest import raises\n"
+        result = _strip_local_imports(source)
+        assert "from pytest import raises" in result
+
+    def test_keeps_collections_import(self):
+        """Test that a from-import of collections is kept."""
+        source = "from collections import defaultdict\n"
+        result = _strip_local_imports(source)
+        assert "from collections import defaultdict" in result
+
+    def test_keeps_bare_import(self):
+        """Test that a bare import statement is kept."""
+        source = "import pytest\n"
+        result = _strip_local_imports(source)
+        assert "import pytest" in result
+
+    def test_keeps_dotted_package(self):
+        """Test that a from-import of a dotted package is kept."""
+        source = "from unittest.mock import patch\n"
+        result = _strip_local_imports(source)
+        assert "from unittest.mock import patch" in result
+
+    def test_mixed_source(self):
+        """Test that only local imports are stripped from mixed source."""
+        source = (
+            "from pytest import raises\n"
+            "from merge_intervals import merge_intervals\n"
+            "from collections import defaultdict\n"
+            "\n"
+            "def test_example():\n"
+            "    pass\n"
+        )
+        result = _strip_local_imports(source)
+        assert "from pytest import raises" in result
+        assert "from collections import defaultdict" in result
+        assert "merge_intervals" not in result
+        assert "def test_example():" in result

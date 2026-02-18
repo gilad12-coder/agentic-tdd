@@ -6,3 +6,10 @@ site/
 *.egg-info/
 dist/
 .idea/
+
+# Tutorial run artifacts (examples/intervals)
+examples/intervals/.session.json
+examples/intervals/plan.md
+examples/intervals/tests/
+examples/intervals/.atdd_hidden_eval_*/
+src/intervals.py

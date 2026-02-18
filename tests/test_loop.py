@@ -14,6 +14,13 @@ from orchestrator.models import (
     TestCritique,
 )
 from orchestrator.loop import (
+    _append_unique,
+    _build_hidden_eval_test_source,
+    _collect_hidden_eval_specs,
+    _count_failed_cases,
+    _module_candidates_from_targets,
+    _spec_for_function,
+    _verify_tests,
     generate_tests,
     print_critique_report,
     process_function,
@@ -301,6 +308,477 @@ class TestRunImplementation:
         assert result is True
         # At least 2 subprocess calls: implementing agent + pytest
         assert mock_subprocess.call_count >= 2
+
+    @patch(
+        "orchestrator.loop.build_implementation_command",
+        side_effect=lambda prompt, _agent, _model: ["agent", prompt],
+    )
+    @patch("orchestrator.loop.subprocess.run")
+    def test_run_implementation_agent_failure_retries_with_feedback(
+        self, mock_subprocess, mock_build_command, tmp_path
+    ):
+        """Test that agent failure feeds retry feedback and skips pytest that attempt.
+
+        Args:
+            mock_subprocess: Mocked subprocess.run.
+            mock_build_command: Mocked build_implementation_command.
+            tmp_path: Pytest tmp_path fixture.
+
+        Returns:
+            None.
+        """
+        agent_calls = {"count": 0}
+
+        def run_side_effect(cmd, *args, **kwargs):
+            """Return mocked subprocess results for agent and pytest calls.
+
+            Args:
+                cmd: Subprocess command arguments.
+                *args: Unused positional args.
+                **kwargs: Unused keyword args.
+
+            Returns:
+                Mocked subprocess result object.
+            """
+            if cmd[0] == "agent":
+                agent_calls["count"] += 1
+                if agent_calls["count"] == 1:
+                    return type(
+                        "Result",
+                        (),
+                        {
+                            "returncode": 2,
+                            "stdout": "impl stdout failure",
+                            "stderr": "impl stderr failure",
+                        },
+                    )()
+                return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            return type("Result", (), {"returncode": 0, "stdout": "1 passed", "stderr": ""})()
+
+        mock_subprocess.side_effect = run_side_effect
+        state = SessionState(
+            function_progress=[
+                FunctionProgress(
+                    name="add",
+                    status=FunctionStatus.done,
+                    test_source="def test_add(): pass",
+                ),
+            ]
+        )
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        config = Config(max_iterations=2)
+        result = run_implementation(state, config, test_dir=test_dir)
+        assert result is True
+        second_agent_prompt = mock_subprocess.call_args_list[1][0][0][1]
+        assert "IMPLEMENTATION AGENT FAILED" in second_agent_prompt
+        assert mock_subprocess.call_args_list[0][0][0][0] == "agent"
+        assert mock_subprocess.call_args_list[1][0][0][0] == "agent"
+        assert mock_subprocess.call_args_list[2][0][0][0] == "pytest"
+
+    @patch(
+        "orchestrator.loop.build_implementation_command",
+        side_effect=lambda prompt, _agent, _model: ["agent", prompt],
+    )
+    @patch("orchestrator.loop.subprocess.run")
+    def test_run_implementation_agent_failures_exhaust_attempts(
+        self, mock_subprocess, mock_build_command, tmp_path
+    ):
+        """Test that repeated agent failures exhaust retries without running pytest.
+
+        Args:
+            mock_subprocess: Mocked subprocess.run.
+            mock_build_command: Mocked build_implementation_command.
+            tmp_path: Pytest tmp_path fixture.
+        """
+        mock_subprocess.return_value = type(
+            "Result", (), {"returncode": 1, "stdout": "", "stderr": "agent failed"}
+        )()
+        state = SessionState(
+            function_progress=[
+                FunctionProgress(
+                    name="add",
+                    status=FunctionStatus.done,
+                    test_source="def test_add(): pass",
+                ),
+            ]
+        )
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        config = Config(max_iterations=2)
+        result = run_implementation(state, config, test_dir=test_dir)
+        assert result is False
+        assert mock_subprocess.call_count == 2
+
+
+class TestVerifyTestsHiddenEvals:
+    """Tests for hidden eval execution and redaction in _verify_tests."""
+
+    @patch("orchestrator.loop.subprocess.run")
+    def test_hidden_failure_feedback_is_redacted(self, mock_subprocess, tmp_path):
+        """Test hidden eval failures do not leak hidden literals in feedback.
+
+        Args:
+            mock_subprocess: Mocked subprocess.run.
+            tmp_path: Pytest tmp_path fixture.
+        """
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_public.py").write_text("def test_public(): assert True\n")
+
+        public_result = type(
+            "Result", (), {"returncode": 0, "stdout": "1 passed", "stderr": ""}
+        )()
+        hidden_result = type(
+            "Result",
+            (),
+            {
+                "returncode": 1,
+                "stdout": "FAILED test_hidden_add.py::test_hidden_case_0 - assert 1 == 999",
+                "stderr": "",
+            },
+        )()
+        mock_subprocess.side_effect = [public_result, hidden_result]
+
+        hidden_spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            target_files=["src/add.py"],
+            hidden_evals=[{"input": "(1, 998)", "output": "999"}],
+        )
+        passed, feedback = _verify_tests(
+            test_dir=test_dir,
+            use_docker=False,
+            hidden_specs={"add": hidden_spec},
+        )
+        assert passed is False
+        assert "hidden evaluations failed" in feedback.lower()
+        assert "999" not in feedback
+        assert "998" not in feedback
+
+    @patch("orchestrator.loop.subprocess.run")
+    def test_hidden_checks_skipped_when_not_configured(self, mock_subprocess, tmp_path):
+        """Test _verify_tests runs only public pytest when no hidden specs exist.
+
+        Args:
+            mock_subprocess: Mocked subprocess.run.
+            tmp_path: Pytest tmp_path fixture.
+        """
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        mock_subprocess.return_value = type(
+            "Result", (), {"returncode": 0, "stdout": "1 passed", "stderr": ""}
+        )()
+        passed, feedback = _verify_tests(
+            test_dir=test_dir,
+            use_docker=False,
+            hidden_specs={},
+        )
+        assert passed is True
+        assert feedback == ""
+        assert mock_subprocess.call_count == 1
+
+    @patch("orchestrator.loop.subprocess.run")
+    def test_hidden_eval_missing_module_candidates_returns_config_error(
+        self, mock_subprocess, tmp_path
+    ):
+        """Test hidden eval config errors are surfaced without redaction.
+
+        Args:
+            mock_subprocess: Mocked subprocess.run.
+            tmp_path: Pytest tmp_path fixture.
+        """
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        mock_subprocess.return_value = type(
+            "Result", (), {"returncode": 0, "stdout": "1 passed", "stderr": ""}
+        )()
+        hidden_spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            target_files=[],
+            hidden_evals=[{"input": "(1, 998)", "output": "999"}],
+        )
+        passed, feedback = _verify_tests(
+            test_dir=test_dir,
+            use_docker=False,
+            hidden_specs={"add": hidden_spec},
+        )
+        assert passed is False
+        assert feedback.startswith("HIDDEN EVAL CONFIG ERROR:")
+        assert "target_files" in feedback
+        assert "998" not in feedback
+        assert "999" not in feedback
+
+
+class TestSpecForFunctionEvalFallback:
+    """Tests for function-level public/hidden eval fallback behavior."""
+
+    def test_function_spec_uses_function_level_when_present(self):
+        """Test _spec_for_function prefers function-level evals."""
+        spec = ParsedSpec(
+            name="math",
+            description="Math ops",
+            public_evals=[{"input": "(1, 1)", "output": "2"}],
+            hidden_evals=[{"input": "(2, 2)", "output": "4"}],
+            functions=[
+                {
+                    "name": "add",
+                    "public_evals": [{"input": "(3, 4)", "output": "7"}],
+                    "hidden_evals": [{"input": "(10, 20)", "output": "30"}],
+                }
+            ],
+        )
+        add_spec = _spec_for_function(spec, "add")
+        assert add_spec.public_evals == [{"input": "(3, 4)", "output": "7"}]
+        assert add_spec.hidden_evals == [{"input": "(10, 20)", "output": "30"}]
+
+    def test_function_spec_falls_back_to_top_level(self):
+        """Test _spec_for_function falls back to top-level evals."""
+        spec = ParsedSpec(
+            name="math",
+            description="Math ops",
+            public_evals=[{"input": "(1, 1)", "output": "2"}],
+            hidden_evals=[{"input": "(2, 2)", "output": "4"}],
+            functions=[{"name": "add"}],
+        )
+        add_spec = _spec_for_function(spec, "add")
+        assert add_spec.public_evals == [{"input": "(1, 1)", "output": "2"}]
+        assert add_spec.hidden_evals == [{"input": "(2, 2)", "output": "4"}]
+
+
+# --- _build_hidden_eval_test_source ---
+
+
+class TestBuildHiddenEvalTestSource:
+    """Tests for _build_hidden_eval_test_source."""
+
+    def test_generates_valid_python_with_function_name(self):
+        """Test that generated source contains correct FUNCTION_NAME constant."""
+        spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            target_files=["src/add.py"],
+            hidden_evals=[{"input": "(1, 2)", "output": "3"}],
+        )
+        source = _build_hidden_eval_test_source(spec)
+        assert "FUNCTION_NAME = 'add'" in source
+
+    def test_generates_module_candidates(self):
+        """Test that generated source includes MODULE_CANDIDATES from targets."""
+        spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            target_files=["src/add.py"],
+            hidden_evals=[{"input": "(1, 2)", "output": "3"}],
+        )
+        source = _build_hidden_eval_test_source(spec)
+        assert "MODULE_CANDIDATES" in source
+        assert "'src.add'" in source
+        assert "'add'" in source
+
+    def test_generates_assertion_lines_from_hidden_evals(self):
+        """Test that each hidden eval produces a test function with assertion."""
+        spec = ParsedSpec(
+            name="multiply",
+            description="Multiply numbers",
+            target_files=["multiply.py"],
+            hidden_evals=[
+                {"input": "(2, 3)", "output": "6"},
+                {"input": "(0, 5)", "output": "0"},
+            ],
+        )
+        source = _build_hidden_eval_test_source(spec)
+        assert "def test_hidden_case_0():" in source
+        assert "assert TARGET_FUNC(2, 3) == 6" in source
+        assert "def test_hidden_case_1():" in source
+        assert "assert TARGET_FUNC(0, 5) == 0" in source
+
+    def test_source_is_syntactically_valid(self):
+        """Test that the generated source compiles without syntax errors."""
+        spec = ParsedSpec(
+            name="add",
+            description="Add numbers",
+            target_files=["src/add.py"],
+            hidden_evals=[{"input": "(1, 2)", "output": "3"}],
+        )
+        source = _build_hidden_eval_test_source(spec)
+        compile(source, "<hidden_eval>", "exec")
+
+
+# --- _module_candidates_from_targets ---
+
+
+class TestModuleCandidatesFromTargets:
+    """Tests for _module_candidates_from_targets."""
+
+    def test_simple_src_path(self):
+        """Test that src/add.py produces src.add and add candidates."""
+        result = _module_candidates_from_targets(["src/add.py"])
+        assert "src.add" in result
+        assert "add" in result
+
+    def test_empty_list_returns_empty(self):
+        """Test that empty target list returns an empty candidate list."""
+        result = _module_candidates_from_targets([])
+        assert result == []
+
+    def test_nested_src_path_includes_short_variant(self):
+        """Test that examples/src/intervals.py includes src.intervals variant."""
+        result = _module_candidates_from_targets(["examples/src/intervals.py"])
+        assert "examples.src.intervals" in result
+        assert "intervals" in result
+
+    def test_init_file_strips_init(self):
+        """Test that __init__.py paths strip the __init__ segment."""
+        result = _module_candidates_from_targets(["mypackage/__init__.py"])
+        assert "mypackage" in result
+        assert "__init__" not in ".".join(result)
+
+    def test_non_py_files_are_ignored(self):
+        """Test that non-.py files are skipped entirely."""
+        result = _module_candidates_from_targets(["README.md", "data.txt"])
+        assert result == []
+
+    def test_bare_file_without_src_prefix(self):
+        """Test that a bare file like add.py gives just ['add']."""
+        result = _module_candidates_from_targets(["add.py"])
+        assert result == ["add"]
+
+    def test_src_prefix_adds_stripped_variant(self):
+        """Test that src/ prefix generates both full and stripped candidates."""
+        result = _module_candidates_from_targets(["src/utils/helpers.py"])
+        assert "src.utils.helpers" in result
+        assert "helpers" in result
+        assert "utils.helpers" in result
+
+
+# --- _collect_hidden_eval_specs ---
+
+
+class TestCollectHiddenEvalSpecs:
+    """Tests for _collect_hidden_eval_specs."""
+
+    def test_none_spec_returns_empty(self):
+        """Test that spec=None returns an empty dict."""
+        state = SessionState(function_progress=[])
+        assert _collect_hidden_eval_specs(state, None) == {}
+
+    def test_functions_without_hidden_evals_returns_empty(self):
+        """Test that functions with no hidden evals produce empty result."""
+        spec = ParsedSpec(
+            name="math",
+            description="Math ops",
+            functions=[{"name": "add"}],
+        )
+        state = SessionState(
+            function_progress=[
+                FunctionProgress(
+                    name="add",
+                    status=FunctionStatus.done,
+                    test_source="def test_add(): pass",
+                ),
+            ]
+        )
+        result = _collect_hidden_eval_specs(state, spec)
+        assert result == {}
+
+    def test_mixed_functions_returns_only_hidden(self):
+        """Test that only functions with hidden evals are collected."""
+        spec = ParsedSpec(
+            name="math",
+            description="Math ops",
+            functions=[
+                {
+                    "name": "add",
+                    "hidden_evals": [{"input": "(1, 2)", "output": "3"}],
+                },
+                {"name": "sub"},
+            ],
+        )
+        state = SessionState(
+            function_progress=[
+                FunctionProgress(
+                    name="add",
+                    status=FunctionStatus.done,
+                    test_source="def test_add(): pass",
+                ),
+                FunctionProgress(
+                    name="sub",
+                    status=FunctionStatus.done,
+                    test_source="def test_sub(): pass",
+                ),
+            ]
+        )
+        result = _collect_hidden_eval_specs(state, spec)
+        assert "add" in result
+        assert "sub" not in result
+
+    def test_skips_functions_without_test_source(self):
+        """Test that functions with no test_source are skipped."""
+        spec = ParsedSpec(
+            name="math",
+            description="Math ops",
+            hidden_evals=[{"input": "(1, 2)", "output": "3"}],
+            functions=[{"name": "add"}],
+        )
+        state = SessionState(
+            function_progress=[
+                FunctionProgress(name="add", status=FunctionStatus.pending),
+            ]
+        )
+        result = _collect_hidden_eval_specs(state, spec)
+        assert result == {}
+
+
+# --- _count_failed_cases ---
+
+
+class TestCountFailedCases:
+    """Tests for _count_failed_cases."""
+
+    def test_counts_failed_lines(self):
+        """Test that FAILED lines are counted correctly."""
+        output = (
+            "FAILED test_add.py::test_case_0 - assert 1 == 2\n"
+            "FAILED test_add.py::test_case_1 - assert 3 == 4\n"
+            "2 failed\n"
+        )
+        assert _count_failed_cases(output) == 2
+
+    def test_no_failures_returns_one(self):
+        """Test that output with no FAILED lines returns minimum of 1."""
+        output = "1 passed in 0.01s\n"
+        assert _count_failed_cases(output) == 1
+
+    def test_empty_string_returns_one(self):
+        """Test that empty string returns minimum of 1."""
+        assert _count_failed_cases("") == 1
+
+
+# --- _append_unique ---
+
+
+class TestAppendUnique:
+    """Tests for _append_unique."""
+
+    def test_basic_append(self):
+        """Test that a new value is appended to the list."""
+        items = ["a", "b"]
+        _append_unique(items, "c")
+        assert items == ["a", "b", "c"]
+
+    def test_duplicate_prevention(self):
+        """Test that an existing value is not appended again."""
+        items = ["a", "b"]
+        _append_unique(items, "b")
+        assert items == ["a", "b"]
+
+    def test_empty_string_skipped(self):
+        """Test that empty string is not appended."""
+        items = ["a"]
+        _append_unique(items, "")
+        assert items == ["a"]
 
 
 # --- prompt_user_review (edit flow) ---
